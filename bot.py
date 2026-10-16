@@ -17,7 +17,7 @@ from livekit.agents import (
     room_io,
 )
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
-from livekit.plugins import deepgram, openai, silero
+from livekit.plugins import deepgram, google, silero
 
 from agents.graph import app_graph
 
@@ -40,7 +40,6 @@ def _required_environment() -> dict[str, str]:
         "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", "").strip(),
         "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", "").strip(),
         "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", "").strip(),
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", "").strip(),
         "GOOGLE_API_KEY": google_api_key,
     }
     missing = [name for name, value in credentials.items() if not value.strip()]
@@ -207,6 +206,13 @@ async def entrypoint(ctx: JobContext) -> None:
         os.environ["GOOGLE_API_KEY"] = credentials["GOOGLE_API_KEY"]
         await ctx.connect()
         thread_id = ctx.room.sid
+        tts_options = {
+            "language": os.getenv("GOOGLE_TTS_LANGUAGE", "en-US").strip() or "en-US"
+        }
+        voice_name = os.getenv("GOOGLE_TTS_VOICE", "").strip()
+        if voice_name:
+            tts_options["voice_name"] = voice_name
+
         session = AgentSession(
             stt=deepgram.STT(
                 model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
@@ -214,11 +220,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 api_key=credentials["DEEPGRAM_API_KEY"],
             ),
             llm=LangGraphLLM(thread_id=thread_id),
-            tts=openai.TTS(
-                model=os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
-                voice=os.getenv("OPENAI_TTS_VOICE", "alloy"),
-                api_key=credentials["OPENAI_API_KEY"],
-            ),
+            tts=google.TTS(**tts_options),
             vad=silero.VAD.load(),
             allow_interruptions=True,
             min_interruption_duration=0.5,

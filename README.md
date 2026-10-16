@@ -2,7 +2,7 @@
 
 A Python voice assistant that uses LiveKit for real-time audio, Deepgram for
 speech recognition, Gemini 2.5 Flash through LangChain and LangGraph for
-supervised tool routing, OpenAI text-to-speech, and Silero voice activity
+supervised tool routing, Google Cloud Text-to-Speech, and Silero voice activity
 detection.
 
 ## Architecture
@@ -23,7 +23,7 @@ Microphone / LiveKit room
  LangGraph response stream
           |
           v
- OpenAI TTS -> LiveKit audio + transcript
+ Google Cloud TTS -> LiveKit audio + transcript
 ```
 
 The supervisor selects from three tools: stock lookup, order creation, and
@@ -38,7 +38,7 @@ the console app uses one stable ID for its running session.
 - Inventory checks and order creation with positive-quantity, SKU, address,
   and stock validation.
 - Order tracking by order ID.
-- LiveKit audio and text input/output, Deepgram STT, OpenAI TTS, and Silero VAD.
+- LiveKit audio and text input/output, Deepgram STT, Google Cloud TTS, and Silero VAD.
 - Interruption support so users can speak while the assistant is responding.
 - Conversation state retained for the lifetime of the process.
 
@@ -56,7 +56,8 @@ not take payment, reserve real stock, or dispatch shipments.
 
 - Python 3.10 or newer.
 - A LiveKit Cloud project or self-hosted LiveKit server.
-- API credentials for Google Gemini, Deepgram, and OpenAI.
+- API credentials for Google Gemini and Deepgram, plus Google Cloud
+  Text-to-Speech credentials.
 - The Python dependencies in `requirements.txt`.
 
 ## Setup
@@ -78,19 +79,25 @@ LIVEKIT_URL=wss://your-livekit-host
 LIVEKIT_API_KEY=your-livekit-api-key
 LIVEKIT_API_SECRET=your-livekit-api-secret
 DEEPGRAM_API_KEY=your-deepgram-api-key
-OPENAI_API_KEY=your-openai-api-key
 GOOGLE_API_KEY=your-google-api-key
 
 # Optional model and voice configuration
 GEMINI_MODEL=gemini-2.5-flash
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
-OPENAI_TTS_MODEL=gpt-4o-mini-tts
-OPENAI_TTS_VOICE=alloy
+GOOGLE_TTS_LANGUAGE=en-US
+# Optional; leave unset to use the plugin's default voice
+GOOGLE_TTS_VOICE=
+# Optional when not using the platform's Application Default Credentials
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/google-cloud-service-account.json
 LIVEKIT_AGENT_NAME=ecommerce-voice-assistant
 ```
 
 `GEMINI_API_KEY` is also accepted in place of `GOOGLE_API_KEY`.
+Google Cloud TTS uses Application Default Credentials. Configure a service
+account file via `GOOGLE_APPLICATION_CREDENTIALS` or provide ADC through the
+deployment platform's workload identity. The Gemini API key alone does not
+authenticate Google Cloud Text-to-Speech.
 
 ## Run
 
@@ -139,4 +146,4 @@ for its sample conversation.
   authentication, authorization, privacy, retention, and observability controls
   before production deployment.
 - The voice worker requires network access to LiveKit, Deepgram, Google, and
-  OpenAI; text-only console mode only needs Gemini.
+  Google Cloud Text-to-Speech; text-only console mode only needs Gemini.
