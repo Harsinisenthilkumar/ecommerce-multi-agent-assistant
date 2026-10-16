@@ -199,19 +199,5 @@ async def entrypoint(ctx: JobContext) -> None:
         raise
 
 
-def main() -> None:
-    """Start the LiveKit worker without invoking any interactive application code."""
-    credentials = _required_environment()
-    cli.run_app(
-        WorkerOptions(
-            entrypoint_fnc=entrypoint,
-            agent_name=os.getenv("LIVEKIT_AGENT_NAME", "ecommerce-voice-assistant"),
-            ws_url=credentials["LIVEKIT_URL"],
-            api_key=credentials["LIVEKIT_API_KEY"],
-            api_secret=credentials["LIVEKIT_API_SECRET"],
-        )
-    )
-
-
 if __name__ == "__main__":
-    main()
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
