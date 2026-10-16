@@ -27,14 +27,21 @@ logger = logging.getLogger("ecommerce-voice-assistant")
 
 def _required_environment() -> dict[str, str]:
     """Validate service credentials before opening a LiveKit session."""
+    google_api_key = next(
+        (
+            value.strip()
+            for name in ("GOOGLE_API_KEY", "GEMINI_API_KEY")
+            if (value := os.getenv(name, "").strip())
+        ),
+        "",
+    )
     credentials = {
-        "LIVEKIT_URL": os.getenv("LIVEKIT_URL", ""),
-        "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", ""),
-        "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", ""),
-        "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", ""),
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY")
-        or os.getenv("GEMINI_API_KEY", ""),
+        "LIVEKIT_URL": os.getenv("LIVEKIT_URL", "").strip(),
+        "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", "").strip(),
+        "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", "").strip(),
+        "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", "").strip(),
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", "").strip(),
+        "GOOGLE_API_KEY": google_api_key,
     }
     missing = [name for name, value in credentials.items() if not value.strip()]
     if missing:
@@ -94,7 +101,8 @@ async def _handle_text_message(
         )
         reply = _assistant_reply(result["messages"])
         logger.info("Responding to room chat from participant %s.", participant_identity)
-        await session.say(reply, allow_interruptions=True)
+        speech_handle = session.say(reply, allow_interruptions=True)
+        await speech_handle.wait_for_playout()
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -103,7 +111,15 @@ async def _handle_text_message(
             participant_identity,
         )
     finally:
-        await reader.aclose()
+        try:
+            await reader.aclose()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Failed to close room chat stream from participant %s.",
+                participant_identity,
+            )
 
 
 class LangGraphLLM(llm.LLM):
@@ -188,6 +204,9 @@ async def entrypoint(ctx: JobContext) -> None:
     text_tasks: set[asyncio.Task[None]] = set()
     try:
         credentials = _required_environment()
+        # agents.graph reads GOOGLE_API_KEY; normalize the GEMINI_API_KEY
+        # fallback to the name expected by that adapter.
+        os.environ["GOOGLE_API_KEY"] = credentials["GOOGLE_API_KEY"]
         await ctx.connect()
         thread_id = ctx.room.sid
         session = AgentSession(
@@ -207,6 +226,26 @@ async def entrypoint(ctx: JobContext) -> None:
             min_interruption_duration=0.5,
             min_interruption_words=1,
         )
+
+        def on_voice_transcription(event: Any) -> None:
+            try:
+                logger.debug(
+                    "Received LiveKit voice transcription event (%s).",
+                    type(event).__name__,
+                )
+            except Exception:
+                logger.exception("Failed to handle a voice transcription event.")
+
+        def on_voice_pipeline_error(event: Any) -> None:
+            try:
+                error = getattr(event, "error", event)
+                logger.error("LiveKit voice pipeline reported an error: %s", error)
+            except Exception:
+                logger.exception("Failed to handle a LiveKit voice pipeline error.")
+
+        session.on("user_input_transcribed", on_voice_transcription)
+        session.on("error", on_voice_pipeline_error)
+
         assistant = Agent(
             instructions=(
                 "You are a concise e-commerce voice assistant. Wait for the user "
@@ -235,16 +274,23 @@ async def entrypoint(ctx: JobContext) -> None:
             reader: rtc.TextStreamReader,
             participant_identity: str,
         ) -> None:
-            task = asyncio.create_task(
-                _handle_text_message(
-                    reader,
-                    participant_identity,
-                    session,
-                    thread_id,
+            try:
+                task = asyncio.create_task(
+                    _handle_text_message(
+                        reader,
+                        participant_identity,
+                        session,
+                        thread_id,
+                    ),
+                    name=f"room-chat-{participant_identity}",
                 )
-            )
-            text_tasks.add(task)
-            task.add_done_callback(text_tasks.discard)
+                text_tasks.add(task)
+                task.add_done_callback(text_tasks.discard)
+            except Exception:
+                logger.exception(
+                    "Failed to schedule room chat from participant %s.",
+                    participant_identity,
+                )
 
         ctx.room.register_text_stream_handler("lk.chat", on_chat_message)
         logger.info("Voice assistant started for room %s.", ctx.room.name)
