@@ -204,8 +204,6 @@ async def entrypoint(ctx: JobContext) -> None:
     text_tasks: set[asyncio.Task[None]] = set()
     try:
         credentials = _required_environment()
-        # agents.graph reads GOOGLE_API_KEY; normalize the GEMINI_API_KEY
-        # fallback to the name expected by that adapter.
         os.environ["GOOGLE_API_KEY"] = credentials["GOOGLE_API_KEY"]
         await ctx.connect()
         thread_id = ctx.room.sid
@@ -314,4 +312,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    port = int(os.getenv("PORT", 8081))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            port=port,
+        )
+    )
