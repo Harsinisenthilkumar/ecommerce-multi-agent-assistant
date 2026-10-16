@@ -5,7 +5,8 @@ from typing import Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -63,6 +64,46 @@ def _latest_user_text(chat_ctx: llm.ChatContext) -> tuple[str, str]:
             if text:
                 return text, f"livekit-{item.id or uuid4().hex}"
     raise ValueError("The incoming LiveKit turn does not contain user text.")
+
+
+def _assistant_reply(messages: list[Any]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
+            text = _text_from_content(message.content).strip()
+            if text:
+                return text
+    raise RuntimeError("LangGraph completed without producing an assistant text reply.")
+
+
+async def _handle_text_message(
+    reader: rtc.TextStreamReader,
+    participant_identity: str,
+    session: AgentSession,
+    thread_id: str,
+) -> None:
+    """Run a LiveKit chat stream through LangGraph and speak the response."""
+    try:
+        text = (await reader.read_all()).strip()
+        if not text:
+            logger.info("Ignoring an empty room chat message.")
+            return
+
+        result = await app_graph.ainvoke(
+            {"messages": [HumanMessage(content=text)]},
+            config={"configurable": {"thread_id": thread_id}},
+        )
+        reply = _assistant_reply(result["messages"])
+        logger.info("Responding to room chat from participant %s.", participant_identity)
+        await session.say(reply, allow_interruptions=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception(
+            "Failed to process room chat message from participant %s.",
+            participant_identity,
+        )
+    finally:
+        await reader.aclose()
 
 
 class LangGraphLLM(llm.LLM):
@@ -144,16 +185,18 @@ class _LangGraphStream(llm.LLMStream):
 
 async def entrypoint(ctx: JobContext) -> None:
     session: AgentSession | None = None
+    text_tasks: set[asyncio.Task[None]] = set()
     try:
         credentials = _required_environment()
         await ctx.connect()
+        thread_id = ctx.room.sid
         session = AgentSession(
             stt=deepgram.STT(
                 model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
                 language=os.getenv("DEEPGRAM_LANGUAGE", "en-US"),
                 api_key=credentials["DEEPGRAM_API_KEY"],
             ),
-            llm=LangGraphLLM(thread_id=ctx.room.sid),
+            llm=LangGraphLLM(thread_id=thread_id),
             tts=openai.TTS(
                 model=os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
                 voice=os.getenv("OPENAI_TTS_VOICE", "alloy"),
@@ -176,7 +219,7 @@ async def entrypoint(ctx: JobContext) -> None:
             agent=assistant,
             room_input_options=room_io.RoomInputOptions(
                 audio_enabled=True,
-                text_enabled=True,
+                text_enabled=False,
                 audio_sample_rate=16000,
                 audio_num_channels=1,
             ),
@@ -187,13 +230,38 @@ async def entrypoint(ctx: JobContext) -> None:
                 audio_num_channels=1,
             ),
         )
+
+        def on_chat_message(
+            reader: rtc.TextStreamReader,
+            participant_identity: str,
+        ) -> None:
+            task = asyncio.create_task(
+                _handle_text_message(
+                    reader,
+                    participant_identity,
+                    session,
+                    thread_id,
+                )
+            )
+            text_tasks.add(task)
+            task.add_done_callback(text_tasks.discard)
+
+        ctx.room.register_text_stream_handler("lk.chat", on_chat_message)
         logger.info("Voice assistant started for room %s.", ctx.room.name)
     except asyncio.CancelledError:
+        for task in text_tasks:
+            task.cancel()
+        if text_tasks:
+            await asyncio.gather(*text_tasks, return_exceptions=True)
         if session is not None:
             await session.aclose()
         raise
     except Exception:
         logger.exception("Unable to start the e-commerce voice assistant.")
+        for task in text_tasks:
+            task.cancel()
+        if text_tasks:
+            await asyncio.gather(*text_tasks, return_exceptions=True)
         if session is not None:
             await session.aclose()
         raise
