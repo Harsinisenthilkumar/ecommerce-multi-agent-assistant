@@ -314,10 +314,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8081))
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
-            port=port,
+            agent_name="A_SrvLCzYYNpNu",  
+            port=int(os.getenv("PORT", 8080)),
         )
     )

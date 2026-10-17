@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessageChunk, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI  # pyright: ignore[reportMissingImports]
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
