@@ -85,46 +85,6 @@ def _assistant_reply(messages: list[Any]) -> str:
     raise RuntimeError("LangGraph completed without producing an assistant text reply.")
 
 
-async def _handle_text_message(
-    reader: rtc.TextStreamReader,
-    participant_identity: str,
-    session: AgentSession,
-    thread_id: str,
-) -> None:
-    """Run a LiveKit chat stream through LangGraph and speak the response."""
-    try:
-        text = (await reader.read_all()).strip()
-        if not text:
-            logger.info("Ignoring an empty room chat message.")
-            return
-
-        result = await app_graph.ainvoke(
-            {"messages": [HumanMessage(content=text)]},
-            config={"configurable": {"thread_id": thread_id}},
-        )
-        reply = _assistant_reply(result["messages"])
-        logger.info("Responding to room chat from participant %s.", participant_identity)
-        speech_handle = session.say(reply, allow_interruptions=True)
-        await speech_handle.wait_for_playout()
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.exception(
-            "Failed to process room chat message from participant %s.",
-            participant_identity,
-        )
-    finally:
-        try:
-            await reader.aclose()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "Failed to close room chat stream from participant %s.",
-                participant_identity,
-            )
-
-
 class LangGraphLLM(llm.LLM):
     """LiveKit LLM adapter that runs the conversation through the LangGraph."""
 
@@ -205,7 +165,6 @@ class _LangGraphStream(llm.LLMStream):
 
 async def entrypoint(ctx: JobContext) -> None:
     session: AgentSession | None = None
-    text_tasks: set[asyncio.Task[None]] = set()
     try:
         credentials = _required_environment()
         os.environ["GOOGLE_API_KEY"] = credentials["GOOGLE_API_KEY"]
@@ -280,44 +239,13 @@ async def entrypoint(ctx: JobContext) -> None:
             ),
         )
 
-        def on_chat_message(
-            reader: rtc.TextStreamReader,
-            participant_identity: str,
-        ) -> None:
-            try:
-                task = asyncio.create_task(
-                    _handle_text_message(
-                        reader,
-                        participant_identity,
-                        session,
-                        thread_id,
-                    ),
-                    name=f"room-chat-{participant_identity}",
-                )
-                text_tasks.add(task)
-                task.add_done_callback(text_tasks.discard)
-            except Exception:
-                logger.exception(
-                    "Failed to schedule room chat from participant %s.",
-                    participant_identity,
-                )
-
-        ctx.room.register_text_stream_handler("lk.chat", on_chat_message)
         logger.info("Voice assistant started for room %s.", ctx.room.name)
     except asyncio.CancelledError:
-        for task in text_tasks:
-            task.cancel()
-        if text_tasks:
-            await asyncio.gather(*text_tasks, return_exceptions=True)
         if session is not None:
             await session.aclose()
         raise
     except Exception:
         logger.exception("Unable to start the e-commerce voice assistant.")
-        for task in text_tasks:
-            task.cancel()
-        if text_tasks:
-            await asyncio.gather(*text_tasks, return_exceptions=True)
         if session is not None:
             await session.aclose()
         raise
