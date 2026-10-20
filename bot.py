@@ -176,7 +176,8 @@ class _LangGraphStream(llm.LLMStream):
                 config=config,
                 stream_mode="messages",
             ):
-                if metadata.get("langgraph_node") != "supervisor":
+                # Accept AIMessage chunks from any node to prevent blocking responses
+                if not isinstance(message_chunk, AIMessage):
                     continue
                 if getattr(message_chunk, "tool_call_chunks", None):
                     continue
