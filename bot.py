@@ -42,7 +42,11 @@ def _required_environment() -> dict[str, str]:
         "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", "").strip(),
         "GOOGLE_API_KEY": google_api_key,
     }
-    missing = [name for name, value in credentials.items() if not value.strip()]
+    missing = [
+        name
+        for name, value in credentials.items()
+        if name != "DEEPGRAM_API_KEY" and not value.strip()
+    ]
     if missing:
         raise RuntimeError(
             "Missing required environment variables: " + ", ".join(missing)
@@ -213,12 +217,17 @@ async def entrypoint(ctx: JobContext) -> None:
         if voice_name:
             tts_options["voice_name"] = voice_name
 
-        session = AgentSession(
-            stt=deepgram.STT(
+        stt = (
+            deepgram.STT(
                 model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
                 language=os.getenv("DEEPGRAM_LANGUAGE", "en-US"),
                 api_key=credentials["DEEPGRAM_API_KEY"],
-            ),
+            )
+            if credentials["DEEPGRAM_API_KEY"]
+            else google.STT(languages=os.getenv("DEEPGRAM_LANGUAGE", "en-US"))
+        )
+        session = AgentSession(
+            stt=stt,
             llm=LangGraphLLM(thread_id=thread_id),
             tts=google.TTS(**tts_options),
             vad=silero.VAD.load(),
