@@ -17,7 +17,7 @@ from livekit.agents import (
     room_io,
 )
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
-from livekit.plugins import deepgram, google, silero
+from livekit.plugins import google, silero
 
 from agents.graph import app_graph
 
@@ -39,13 +39,12 @@ def _required_environment() -> dict[str, str]:
         "LIVEKIT_URL": os.getenv("LIVEKIT_URL", "").strip(),
         "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", "").strip(),
         "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", "").strip(),
-        "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", "").strip(),
         "GOOGLE_API_KEY": google_api_key,
     }
     missing = [
         name
         for name, value in credentials.items()
-        if name != "DEEPGRAM_API_KEY" and not value.strip()
+        if not value.strip()
     ]
     if missing:
         raise RuntimeError(
@@ -150,7 +149,6 @@ class _LangGraphStream(llm.LLMStream):
                 config=config,
                 stream_mode="messages",
             ):
-                # Accept AIMessage chunks from any active node to prevent blocking responses
                 if not isinstance(message_chunk, AIMessage):
                     continue
                 if getattr(message_chunk, "tool_call_chunks", None):
@@ -191,17 +189,7 @@ async def entrypoint(ctx: JobContext) -> None:
         if voice_name:
             tts_options["voice_name"] = voice_name
 
-        stt = (
-            deepgram.STT(
-                model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
-                language=os.getenv("DEEPGRAM_LANGUAGE", "en-US"),
-                api_key=credentials["DEEPGRAM_API_KEY"],
-            )
-            if credentials["DEEPGRAM_API_KEY"]
-            else google.STT(languages=os.getenv("DEEPGRAM_LANGUAGE", "en-US"))
-        )
-
-        # Load Silero VAD in a separate thread to prevent blocking the asyncio event loop
+        stt = google.STT(languages=os.getenv("DEEPGRAM_LANGUAGE", "en-US"))
         vad_instance = await asyncio.to_thread(silero.VAD.load)
 
         session = AgentSession(
