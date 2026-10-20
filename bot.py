@@ -200,11 +200,15 @@ async def entrypoint(ctx: JobContext) -> None:
             if credentials["DEEPGRAM_API_KEY"]
             else google.STT(languages=os.getenv("DEEPGRAM_LANGUAGE", "en-US"))
         )
+
+        # Load Silero VAD in a separate thread to prevent blocking the asyncio event loop
+        vad_instance = await asyncio.to_thread(silero.VAD.load)
+
         session = AgentSession(
             stt=stt,
             llm=LangGraphLLM(thread_id=thread_id),
             tts=google.TTS(**tts_options),
-            vad=silero.VAD.load(),
+            vad=vad_instance,
             allow_interruptions=True,
             min_interruption_duration=0.5,
             min_interruption_words=1,
