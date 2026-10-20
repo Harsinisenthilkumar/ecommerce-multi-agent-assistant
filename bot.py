@@ -17,7 +17,7 @@ from livekit.agents import (
     room_io,
 )
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
-from livekit.plugins import google, silero
+from livekit.plugins import deepgram, google, silero
 
 from agents.graph import app_graph
 
@@ -39,12 +39,13 @@ def _required_environment() -> dict[str, str]:
         "LIVEKIT_URL": os.getenv("LIVEKIT_URL", "").strip(),
         "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", "").strip(),
         "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", "").strip(),
+        "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", "").strip(),
         "GOOGLE_API_KEY": google_api_key,
     }
     missing = [
         name
         for name, value in credentials.items()
-        if not value.strip()
+        if name != "DEEPGRAM_API_KEY" and not value.strip()
     ]
     if missing:
         raise RuntimeError(
@@ -189,7 +190,11 @@ async def entrypoint(ctx: JobContext) -> None:
         if voice_name:
             tts_options["voice_name"] = voice_name
 
-        stt = google.STT(languages=os.getenv("DEEPGRAM_LANGUAGE", "en-US"))
+        stt = deepgram.STT(
+            model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
+            language=os.getenv("DEEPGRAM_LANGUAGE", "en-US"),
+            api_key=credentials["DEEPGRAM_API_KEY"],
+        )
         vad_instance = await asyncio.to_thread(silero.VAD.load)
 
         session = AgentSession(
