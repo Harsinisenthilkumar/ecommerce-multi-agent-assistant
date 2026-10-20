@@ -160,8 +160,10 @@ async def entrypoint(ctx: JobContext) -> None:
         os.environ["GOOGLE_API_KEY"] = credentials["GOOGLE_API_KEY"]
         await ctx.connect()
         thread_id = ctx.room.sid
+        
         tts_options = {
-            "language": os.getenv("GOOGLE_TTS_LANGUAGE", "en-US").strip() or "en-US"
+            "language": os.getenv("GOOGLE_TTS_LANGUAGE", "en-US").strip() or "en-US",
+            "api_key": credentials["GOOGLE_API_KEY"],
         }
         voice_name = os.getenv("GOOGLE_TTS_VOICE", "").strip()
         if voice_name:
