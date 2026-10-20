@@ -267,7 +267,7 @@ async def entrypoint(ctx: JobContext) -> None:
             agent=assistant,
             room_input_options=room_io.RoomInputOptions(
                 audio_enabled=True,
-                text_enabled=False,
+                text_enabled=True,
                 audio_sample_rate=16000,
                 audio_num_channels=1,
             ),
