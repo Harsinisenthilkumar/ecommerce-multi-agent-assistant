@@ -4,7 +4,6 @@ import os
 from typing import Any
 from uuid import uuid4
 
-from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
 from livekit import rtc
 from livekit.agents import (
@@ -19,34 +18,22 @@ from livekit.agents import (
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
 from livekit.plugins import deepgram, silero
 
+from config import Config
 from agents.graph import app_graph
 
-load_dotenv()
 logger = logging.getLogger("ecommerce-voice-assistant")
 
 
 def _required_environment() -> dict[str, str]:
     """Validate service credentials before opening a LiveKit session."""
-    google_api_key = next(
-        (
-            value.strip()
-            for name in ("GOOGLE_API_KEY", "GEMINI_API_KEY")
-            if (value := os.getenv(name, "").strip())
-        ),
-        "",
-    )
     credentials = {
-        "LIVEKIT_URL": os.getenv("LIVEKIT_URL", "").strip(),
-        "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", "").strip(),
-        "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", "").strip(),
-        "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", "").strip(),
-        "GOOGLE_API_KEY": google_api_key,
+        "LIVEKIT_URL": Config.LIVEKIT_URL.strip(),
+        "LIVEKIT_API_KEY": Config.LIVEKIT_API_KEY.strip(),
+        "LIVEKIT_API_SECRET": Config.LIVEKIT_API_SECRET.strip(),
+        "DEEPGRAM_API_KEY": Config.DEEPGRAM_API_KEY.strip(),
+        "GOOGLE_API_KEY": Config.GOOGLE_API_KEY.strip(),
     }
-    missing = [
-        name
-        for name, value in credentials.items()
-        if name != "DEEPGRAM_API_KEY" and not value.strip()
-    ]
+    missing = [name for name, value in credentials.items() if not value]
     if missing:
         raise RuntimeError(
             "Missing required environment variables: " + ", ".join(missing)
@@ -85,7 +72,7 @@ class LangGraphLLM(llm.LLM):
 
     @property
     def model(self) -> str:
-        return os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        return Config.GEMINI_MODEL
 
     @property
     def provider(self) -> str:
