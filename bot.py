@@ -76,29 +76,6 @@ def _latest_user_text(chat_ctx: llm.ChatContext) -> tuple[str, str]:
     raise ValueError("The incoming LiveKit turn does not contain user text.")
 
 
-def _assistant_reply(messages: list[Any]) -> str:
-    for message in reversed(messages):
-        if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
-            text = _text_from_content(message.content).strip()
-            if text:
-                return text
-    raise RuntimeError("LangGraph completed without producing an assistant text reply.")
-
-
-async def _handle_session_text(text: str, session: AgentSession, thread_id: str) -> None:
-    """Process text typed into the LiveKit console chat box."""
-    try:
-        result = await app_graph.ainvoke(
-            {"messages": [HumanMessage(content=text)]},
-            config={"configurable": {"thread_id": thread_id}},
-        )
-        reply = _assistant_reply(result["messages"])
-        speech_handle = session.say(reply, allow_interruptions=True)
-        await speech_handle.wait_for_playout()
-    except Exception:
-        logger.exception("Failed to process session text message.")
-
-
 class LangGraphLLM(llm.LLM):
     """LiveKit LLM adapter that runs the conversation through the LangGraph."""
 
@@ -172,7 +149,7 @@ class _LangGraphStream(llm.LLMStream):
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("LangGraph failed while generating a voice response.")
+            logger.exception("LangGraph failed while generating a response.")
             raise
 
 
@@ -226,17 +203,10 @@ async def entrypoint(ctx: JobContext) -> None:
         session.on("user_input_transcribed", on_voice_transcription)
         session.on("error", on_voice_pipeline_error)
 
-        @session.on("message_received")
-        def on_message_received(msg: llm.ChatMessage) -> None:
-            if msg.role == "user" and msg.text_content:
-                asyncio.create_task(
-                    _handle_session_text(msg.text_content, session, thread_id)
-                )
-
         assistant = Agent(
             instructions=(
                 "You are a concise e-commerce voice assistant. Wait for the user "
-                "to speak, then answer using the connected LangGraph."
+                "to speak or type, then answer using the connected LangGraph."
             ),
             allow_interruptions=True,
         )
