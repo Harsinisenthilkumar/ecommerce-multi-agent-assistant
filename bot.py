@@ -150,7 +150,7 @@ class _LangGraphStream(llm.LLMStream):
                 config=config,
                 stream_mode="messages",
             ):
-                # Accept AIMessage chunks from any node to prevent blocking responses
+                # Accept AIMessage chunks from any active node to prevent blocking responses
                 if not isinstance(message_chunk, AIMessage):
                     continue
                 if getattr(message_chunk, "tool_call_chunks", None):
