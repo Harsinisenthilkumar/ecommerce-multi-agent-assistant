@@ -85,6 +85,20 @@ def _assistant_reply(messages: list[Any]) -> str:
     raise RuntimeError("LangGraph completed without producing an assistant text reply.")
 
 
+async def _handle_session_text(text: str, session: AgentSession, thread_id: str) -> None:
+    """Process text typed into the LiveKit console chat box."""
+    try:
+        result = await app_graph.ainvoke(
+            {"messages": [HumanMessage(content=text)]},
+            config={"configurable": {"thread_id": thread_id}},
+        )
+        reply = _assistant_reply(result["messages"])
+        speech_handle = session.say(reply, allow_interruptions=True)
+        await speech_handle.wait_for_playout()
+    except Exception:
+        logger.exception("Failed to process session text message.")
+
+
 class LangGraphLLM(llm.LLM):
     """LiveKit LLM adapter that runs the conversation through the LangGraph."""
 
@@ -214,6 +228,13 @@ async def entrypoint(ctx: JobContext) -> None:
 
         session.on("user_input_transcribed", on_voice_transcription)
         session.on("error", on_voice_pipeline_error)
+
+        @session.on("message_received")
+        def on_message_received(msg: llm.ChatMessage) -> None:
+            if msg.role == "user" and msg.text_content:
+                asyncio.create_task(
+                    _handle_session_text(msg.text_content, session, thread_id)
+                )
 
         assistant = Agent(
             instructions=(
