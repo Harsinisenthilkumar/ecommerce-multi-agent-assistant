@@ -17,7 +17,7 @@ from livekit.agents import (
     room_io,
 )
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
-from livekit.plugins import deepgram, google, silero
+from livekit.plugins import deepgram, silero
 
 from agents.graph import app_graph
 
@@ -160,18 +160,14 @@ async def entrypoint(ctx: JobContext) -> None:
         os.environ["GOOGLE_API_KEY"] = credentials["GOOGLE_API_KEY"]
         await ctx.connect()
         thread_id = ctx.room.sid
-        
-        tts_options = {
-            "language": os.getenv("GOOGLE_TTS_LANGUAGE", "en-US").strip() or "en-US",
-            "api_key": credentials["GOOGLE_API_KEY"],
-        }
-        voice_name = os.getenv("GOOGLE_TTS_VOICE", "").strip()
-        if voice_name:
-            tts_options["voice_name"] = voice_name
 
         stt = deepgram.STT(
             model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
             language=os.getenv("DEEPGRAM_LANGUAGE", "en-US"),
+            api_key=credentials["DEEPGRAM_API_KEY"],
+        )
+        tts = deepgram.TTS(
+            model=os.getenv("DEEPGRAM_TTS_MODEL", "aura-asteria-en"),
             api_key=credentials["DEEPGRAM_API_KEY"],
         )
         vad_instance = await asyncio.to_thread(silero.VAD.load)
@@ -179,7 +175,7 @@ async def entrypoint(ctx: JobContext) -> None:
         session = AgentSession(
             stt=stt,
             llm=LangGraphLLM(thread_id=thread_id),
-            tts=google.TTS(**tts_options),
+            tts=tts,
             vad=vad_instance,
             allow_interruptions=True,
             min_interruption_duration=0.5,
