@@ -36,7 +36,7 @@ from config import Config
 load_dotenv()
 
 logger = logging.getLogger("ecommerce-voice-assistant")
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = Config.GROQ_MODEL
 LANGCHAIN_TOOLS = [inventory_tool, create_order_tool, track_order_tool]
 
 

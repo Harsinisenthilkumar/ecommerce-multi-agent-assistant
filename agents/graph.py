@@ -11,6 +11,7 @@ from langgraph.prebuilt import ToolNode
 
 from agents.state import AgentState
 from agents.tools import check_inventory_stock, create_order, track_order
+from config import Config
 
 load_dotenv()
 
@@ -32,7 +33,7 @@ def _get_supervisor_llm():
         raise RuntimeError("Groq credentials are missing. Set GROQ_API_KEY.")
 
     return ChatGroq(
-        model="llama-3.1-8b-instant",
+        model=Config.GROQ_MODEL,
         temperature=0,
         api_key=api_key,
         max_retries=5,          # Handles rate limit retries automatically
