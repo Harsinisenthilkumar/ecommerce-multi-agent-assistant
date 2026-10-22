@@ -15,7 +15,12 @@ from livekit.agents import (
     llm,
     room_io,
 )
-from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
+from livekit.agents.types import (
+    APIConnectOptions,
+    DEFAULT_API_CONNECT_OPTIONS,
+    NOT_GIVEN,
+    NotGivenOr,
+)
 from livekit.plugins import deepgram, silero
 
 from config import Config
@@ -27,7 +32,6 @@ GROQ_MODEL = "llama-3.1-8b-instant"
 
 
 def _required_environment() -> dict[str, str]:
-    """Validate service credentials before opening a LiveKit session."""
     credentials = {
         "LIVEKIT_URL": Config.LIVEKIT_URL.strip(),
         "LIVEKIT_API_KEY": Config.LIVEKIT_API_KEY.strip(),
@@ -89,15 +93,18 @@ class GroqLLM(llm.LLM):
         chat_ctx: llm.ChatContext,
         tools: list[llm.Tool] | None = None,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-        **kwargs: Any,
+        parallel_tool_calls: NotGivenOr[bool] = NOT_GIVEN,
+        tool_choice: NotGivenOr[llm.ToolChoice] = NOT_GIVEN,
+        extra_kwargs: NotGivenOr[dict[str, Any]] = NOT_GIVEN,
     ) -> llm.LLMStream:
         if tools:
             raise ValueError("The Groq voice assistant does not support tools.")
-        if kwargs:
-            logger.debug(
-                "Ignoring unsupported LiveKit LLM options: %s",
-                ", ".join(sorted(kwargs)),
-            )
+        if (
+            parallel_tool_calls is not NOT_GIVEN
+            or tool_choice is not NOT_GIVEN
+            or extra_kwargs is not NOT_GIVEN
+        ):
+            logger.debug("Ignoring tool options because the Groq adapter has no tools.")
         return _GroqLLMStream(
             self,
             chat_ctx=chat_ctx,
@@ -114,25 +121,6 @@ class _GroqLLMStream(llm.LLMStream):
                 inject_dummy_user_message=False,
             )
             messages = convert_to_messages(provider_messages)
-            last_user_message = next(
-                (
-                    message
-                    for message in reversed(messages)
-                    if message.type == "human"
-                ),
-                None,
-            )
-            user_text_length = (
-                len(_text_from_content(last_user_message.content))
-                if last_user_message is not None
-                else 0
-            )
-            logger.debug(
-                "Sending %d chat messages to Groq; latest user text is %d characters.",
-                len(messages),
-                user_text_length,
-            )
-
             response_started = False
             async for chunk in self._llm._chat_model.astream(messages):
                 if not isinstance(chunk, AIMessageChunk):
@@ -147,11 +135,8 @@ class _GroqLLMStream(llm.LLMStream):
                         delta=llm.ChoiceDelta(content=text),
                     )
                 )
-
             if not response_started:
                 raise RuntimeError("Groq completed without producing a text response.")
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("Groq LLM generation failed.")
             raise
@@ -161,8 +146,9 @@ async def entrypoint(ctx: JobContext) -> None:
     session: AgentSession | None = None
     try:
         credentials = _required_environment()
+
         try:
-            vad_instance = await asyncio.to_thread(
+            vad = await asyncio.to_thread(
                 silero.VAD.load,
                 min_speech_duration=0.05,
                 min_silence_duration=0.5,
@@ -194,7 +180,7 @@ async def entrypoint(ctx: JobContext) -> None:
             stt=stt,
             llm=groq_llm,
             tts=tts,
-            vad=vad_instance,
+            vad=vad,
             allow_interruptions=True,
             min_interruption_duration=0.5,
             min_interruption_words=1,
@@ -207,26 +193,12 @@ async def entrypoint(ctx: JobContext) -> None:
             },
         )
 
-        def on_voice_transcription(event: Any) -> None:
-            try:
-                logger.debug(
-                    "Received LiveKit voice transcription event (%s).",
-                    type(event).__name__,
-                )
-            except Exception:
-                logger.exception("Failed to handle a voice transcription event.")
-
         def on_voice_pipeline_error(event: Any) -> None:
-            try:
-                error = getattr(event, "error", event)
-                logger.error(
-                    "LiveKit voice pipeline generation failed (LLM/STT/TTS): %s",
-                    error,
-                )
-            except Exception:
-                logger.exception("Failed to handle a LiveKit voice pipeline error.")
+            logger.error(
+                "LiveKit voice pipeline generation failed (LLM/STT/TTS): %s",
+                getattr(event, "error", event),
+            )
 
-        session.on("user_input_transcribed", on_voice_transcription)
         session.on("error", on_voice_pipeline_error)
 
         assistant = Agent(
@@ -237,6 +209,7 @@ async def entrypoint(ctx: JobContext) -> None:
             ),
             allow_interruptions=True,
         )
+
         await ctx.connect()
         await session.start(
             room=ctx.room,
@@ -252,13 +225,10 @@ async def entrypoint(ctx: JobContext) -> None:
                     sample_rate=24000,
                     num_channels=1,
                 ),
-                text_output=room_io.TextOutputOptions(
-                    sync_transcription=True,
-                ),
+                text_output=room_io.TextOutputOptions(sync_transcription=True),
             ),
         )
-
-        logger.info("Voice assistant started for room %s.", ctx.room.name)
+        logger.info("Voice and text agent started in room %s.", ctx.room.name)
     except asyncio.CancelledError:
         if session is not None:
             await session.aclose()
@@ -274,7 +244,7 @@ if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name="A_SrvLCzYYNpNu",  
+            agent_name="CA_uV5hQQhZbLRF",
             port=int(os.getenv("PORT", 8080)),
         )
     )
