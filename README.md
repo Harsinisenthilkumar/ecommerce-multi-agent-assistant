@@ -23,12 +23,14 @@ Microphone / LiveKit room
 The browser requests short-lived LiveKit room tokens from the local FastAPI
 server. API credentials remain on the server. The worker accepts microphone
 audio and LiveKit chat text, then streams response audio and synchronized
-transcriptions back to the room. The separate text-only console app uses the
-LangGraph supervisor and its demo inventory/order tools.
+transcriptions back to the room. Both voice and text turns can use the
+inventory, order-creation, and order-tracking tools backed by the demo store.
+The separate text-only console app also uses the LangGraph supervisor and these
+demo tools.
 
 ## Features
 
-- Groq-powered voice responses and LangGraph tool routing in the console app.
+- Groq-powered voice responses with inventory and order tools.
 - Inventory checks and order creation with positive-quantity, SKU, address,
   and stock validation.
 - Order tracking by order ID.

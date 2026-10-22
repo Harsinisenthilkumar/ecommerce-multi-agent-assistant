@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import os
 from typing import Any
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessageChunk, convert_to_messages
@@ -12,6 +14,7 @@ from livekit.agents import (
     JobContext,
     WorkerOptions,
     cli,
+    function_tool,
     llm,
     room_io,
 )
@@ -23,12 +26,43 @@ from livekit.agents.types import (
 )
 from livekit.plugins import deepgram, silero
 
+from agents.tools import (
+    check_inventory_stock as inventory_tool,
+    create_order as create_order_tool,
+    track_order as track_order_tool,
+)
 from config import Config
 
 load_dotenv()
 
 logger = logging.getLogger("ecommerce-voice-assistant")
 GROQ_MODEL = "llama-3.1-8b-instant"
+LANGCHAIN_TOOLS = [inventory_tool, create_order_tool, track_order_tool]
+
+
+@function_tool
+async def check_inventory_stock(sku: str) -> str:
+    """Check available stock for a product SKU."""
+    return str(await inventory_tool.ainvoke({"sku": sku}))
+
+
+@function_tool
+async def create_order(sku: str, quantity: int, address: str) -> str:
+    """Create an order for a SKU and quantity using the given delivery address."""
+    return str(
+        await create_order_tool.ainvoke(
+            {"sku": sku, "quantity": quantity, "address": address}
+        )
+    )
+
+
+@function_tool
+async def track_order(order_id: str) -> str:
+    """Look up the current status of an order by its order ID."""
+    return str(await track_order_tool.ainvoke({"order_id": order_id}))
+
+
+LIVEKIT_TOOLS = [check_inventory_stock, create_order, track_order]
 
 
 def _required_environment() -> dict[str, str]:
@@ -97,23 +131,39 @@ class GroqLLM(llm.LLM):
         tool_choice: NotGivenOr[llm.ToolChoice] = NOT_GIVEN,
         extra_kwargs: NotGivenOr[dict[str, Any]] = NOT_GIVEN,
     ) -> llm.LLMStream:
-        if tools:
-            raise ValueError("The Groq voice assistant does not support tools.")
-        if (
-            parallel_tool_calls is not NOT_GIVEN
-            or tool_choice is not NOT_GIVEN
-            or extra_kwargs is not NOT_GIVEN
-        ):
-            logger.debug("Ignoring tool options because the Groq adapter has no tools.")
+        if extra_kwargs is not NOT_GIVEN:
+            logger.debug("Ignoring unsupported extra LLM options.")
         return _GroqLLMStream(
             self,
             chat_ctx=chat_ctx,
-            tools=[],
+            tools=tools or [],
             conn_options=conn_options,
+            parallel_tool_calls=parallel_tool_calls,
+            tool_choice=tool_choice,
         )
 
 
 class _GroqLLMStream(llm.LLMStream):
+    def __init__(
+        self,
+        groq_llm: GroqLLM,
+        *,
+        chat_ctx: llm.ChatContext,
+        tools: list[llm.Tool],
+        conn_options: APIConnectOptions,
+        parallel_tool_calls: NotGivenOr[bool],
+        tool_choice: NotGivenOr[llm.ToolChoice],
+    ) -> None:
+        super().__init__(
+            groq_llm,
+            chat_ctx=chat_ctx,
+            tools=tools,
+            conn_options=conn_options,
+        )
+        self._chat_model = groq_llm._chat_model
+        self._parallel_tool_calls = parallel_tool_calls
+        self._tool_choice = tool_choice
+
     async def _run(self) -> None:
         try:
             provider_messages, _ = self._chat_ctx.to_provider_format(
@@ -121,10 +171,31 @@ class _GroqLLMStream(llm.LLMStream):
                 inject_dummy_user_message=False,
             )
             messages = convert_to_messages(provider_messages)
+            model = self._chat_model
+            if self._tools:
+                tool_choice = (
+                    self._tool_choice
+                    if self._tool_choice is not NOT_GIVEN
+                    else "auto"
+                )
+                bind_options: dict[str, Any] = {"tool_choice": tool_choice}
+                if self._parallel_tool_calls is not NOT_GIVEN:
+                    bind_options["parallel_tool_calls"] = self._parallel_tool_calls
+                model = model.bind_tools(
+                    LANGCHAIN_TOOLS,
+                    **bind_options,
+                )
+
             response_started = False
-            async for chunk in self._llm._chat_model.astream(messages):
+            accumulated_chunk: AIMessageChunk | None = None
+            async for chunk in model.astream(messages):
                 if not isinstance(chunk, AIMessageChunk):
                     continue
+                accumulated_chunk = (
+                    chunk
+                    if accumulated_chunk is None
+                    else accumulated_chunk + chunk
+                )
                 text = _text_from_content(chunk.content)
                 if not text:
                     continue
@@ -135,8 +206,29 @@ class _GroqLLMStream(llm.LLMStream):
                         delta=llm.ChoiceDelta(content=text),
                     )
                 )
+            tool_calls = accumulated_chunk.tool_calls if accumulated_chunk else []
+            livekit_tool_calls = [
+                llm.FunctionToolCall(
+                    name=call["name"],
+                    arguments=json.dumps(call["args"]),
+                    call_id=call.get("id") or f"groq-{uuid4().hex}",
+                )
+                for call in tool_calls
+                if call.get("name") and isinstance(call.get("args"), dict)
+            ]
+            if livekit_tool_calls:
+                self._event_ch.send_nowait(
+                    llm.ChatChunk(
+                        id=f"groq-{id(self)}",
+                        delta=llm.ChoiceDelta(tool_calls=livekit_tool_calls),
+                    )
+                )
+                response_started = True
+
             if not response_started:
                 raise RuntimeError("Groq completed without producing a text response.")
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("Groq LLM generation failed.")
             raise
@@ -203,10 +295,13 @@ async def entrypoint(ctx: JobContext) -> None:
 
         assistant = Agent(
             instructions=(
-                "You are a concise e-commerce assistant. You do not have access "
-                "to inventory, ordering, or order-tracking tools. Do not claim "
-                "to check stock, place orders, or retrieve order status."
+                "You are a concise e-commerce assistant. Use the inventory tool "
+                "to check stock, the order tool to place an order, and the "
+                "tracking tool to look up an order. Never claim an action "
+                "succeeded unless the tool result confirms it. Ask for missing "
+                "details instead of guessing. Keep spoken replies brief."
             ),
+            tools=LIVEKIT_TOOLS,
             allow_interruptions=True,
         )
 
