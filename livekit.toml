@@ -2,4 +2,5 @@
   subdomain = "multi-agent-y7zzt521"
 
 [agent]
-  id = "CA_nhV3Pt3iegEk"
+  name = "ecommerce-multi-agent"
+  id = "CA_LBxinci4sj83"
