@@ -14,8 +14,8 @@ Microphone / LiveKit room
  Deepgram STT + Silero VAD
           |
           v
- LiveKit OpenAI-compatible LLM
- (Groq Llama 3.1 8B Instant)
+ LangChain ChatGroq
+ (Llama 3.1 8B Instant)
           |
           v
  Deepgram TTS -> LiveKit audio + transcript
@@ -113,10 +113,11 @@ python bot.py start
 ```
 
 Connect a LiveKit room client with microphone audio enabled. The assistant
-transcribes the user's speech, sends it directly to Groq, then streams the
-response text to LiveKit's TTS pipeline and publishes the generated audio and
-transcript. The voice worker does not have inventory, ordering, or order-tracking
-tools; use the text-only console app for those LangGraph-backed actions.
+accepts both microphone audio and LiveKit chat text. Silero VAD detects speech
+turns and endpointing; Groq responses are synthesized by Deepgram TTS and
+published as audio with synchronized text transcriptions. The voice worker does
+not have inventory, ordering, or order-tracking tools; use the text-only console
+app for those LangGraph-backed actions.
 
 ## Tests
 
