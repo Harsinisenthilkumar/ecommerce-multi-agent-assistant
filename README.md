@@ -82,7 +82,7 @@ DEEPGRAM_API_KEY=your-deepgram-api-key
 GOOGLE_API_KEY=your-google-api-key
 
 # Optional model and voice configuration
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-1.5-flash-latest
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
 GOOGLE_TTS_LANGUAGE=en-US

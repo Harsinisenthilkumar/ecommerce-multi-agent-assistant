@@ -34,7 +34,7 @@ def _get_supervisor_llm():
         )
 
     return ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+        model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest"),
         google_api_key=api_key,
         temperature=0,
         max_retries=5,          # Handles rate limit retries automatically
