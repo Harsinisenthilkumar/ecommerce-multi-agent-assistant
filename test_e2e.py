@@ -1,4 +1,5 @@
 import asyncio
+import sys
 
 from langchain_core.messages import HumanMessage
 from agents.graph import app_graph
@@ -27,7 +28,9 @@ async def run_end_to_end_test():
                 print(f"Agent: {msg.content}")
             elif hasattr(msg, "tool_calls") and msg.tool_calls:
                 for call in msg.tool_calls:
-                    print(f"🛠️ [Tool Invoked]: {call['name']} | Args: {call['args']}")
+                    print(f"[Tool Invoked]: {call['name']} | Args: {call['args']}")
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     asyncio.run(run_end_to_end_test())

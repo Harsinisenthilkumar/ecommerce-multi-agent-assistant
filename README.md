@@ -1,63 +1,30 @@
-# E-Commerce Multi-Agent Voice Assistant
+# LiveKit LangGraph E-Commerce Assistant
 
-A full-stack Python voice assistant with a local browser client. LiveKit carries
-audio and chat, Deepgram handles speech recognition and synthesis, Groq's Llama
-3.1 8B Instant provides responses, and Silero detects voice turns.
+This project routes text and voice through one LangGraph multi-agent workflow:
 
-## Architecture
+- **Text input:** reliable LiveKit data packets (`chat.user`) -> supervisor ->
+  specialist/tool when needed -> text reply (`assistant.chat`) in the browser.
+  This path does not run TTS.
+- **Voice input:** user activates the microphone -> LiveKit audio -> Silero VAD
+  and Deepgram STT -> the same LangGraph workflow -> Deepgram TTS and a
+  synchronized transcript.
+- **Agents:** the LangGraph supervisor routes inventory, order creation, and
+  order tracking requests to separate specialist agents. General questions are
+  answered by the supervisor.
 
-```text
-Microphone / LiveKit room
-          |
-          v
- Deepgram STT + Silero VAD
-          |
-          v
- LangChain ChatGroq
- (Llama 3.1 8B Instant)
-          |
-          v
- Deepgram TTS -> LiveKit audio + transcript
-```
-
-The browser requests short-lived LiveKit room tokens from the local FastAPI
-server. API credentials remain on the server. The worker accepts microphone
-audio and LiveKit chat text, then streams response audio and synchronized
-transcriptions back to the room. Both voice and text turns can use the
-inventory, order-creation, and order-tracking tools backed by the demo store.
-The separate text-only console app also uses the LangGraph supervisor and these
-demo tools.
-
-## Features
-
-- Groq-powered voice responses with inventory and order tools.
-- Inventory checks and order creation with positive-quantity, SKU, address,
-  and stock validation.
-- Order tracking by order ID.
-- Local browser chat and microphone support, Deepgram STT/TTS, and Silero VAD.
-- Interruption support so users can speak while the assistant is responding.
-- Conversation state retained for the lifetime of the process.
-
-### Demo data and persistence
-
-`agents/tools.py` currently implements a thread-safe, in-memory demo store. It
-starts with `SKU-101` (15 units), `SKU-102` (0 units), and `SKU-103` (8 units),
-as well as a sample order `ORD-88492`. New orders decrement stock and receive
-generated order IDs. Data is lost when the Python process exits. Replace these
-tool implementations with authenticated inventory/order service calls and a
-persistent store before using the project for real commerce; this demo does
-not take payment, reserve real stock, or dispatch shipments.
+The demo commerce tools use an in-memory store. They do not take payment,
+reserve real stock, or dispatch shipments.
 
 ## Requirements
 
 - Python 3.10 or newer.
-- A LiveKit Cloud project or self-hosted LiveKit server.
-- API credentials for LiveKit, Groq, and Deepgram.
-- The Python dependencies in `requirements.txt`.
+- A LiveKit Cloud project or self-hosted server.
+- LiveKit, Groq, and Deepgram credentials.
 
-## Setup
+## Configure
 
-Create and activate a virtual environment, then install the dependencies:
+From PowerShell in the repository directory, install dependencies in a virtual
+environment:
 
 ```powershell
 py -m venv .venv
@@ -66,72 +33,58 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root. Do not commit this file or place
-credentials in source code:
+Add these values to `.env` in the repository root. Keep the real credentials
+private; do not commit `.env`.
 
 ```dotenv
 LIVEKIT_URL=wss://your-livekit-host
 LIVEKIT_API_KEY=your-livekit-api-key
 LIVEKIT_API_SECRET=your-livekit-api-secret
-DEEPGRAM_API_KEY=your-deepgram-api-key
 GROQ_API_KEY=your-groq-api-key
+DEEPGRAM_API_KEY=your-deepgram-api-key
 
-# Optional voice configuration
+# Optional voice settings
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
+DEEPGRAM_TTS_MODEL=aura-asteria-en
 ```
 
-## Run
+The Groq model is configured in `config.py` as `openai/gpt-oss-20b`. The
+previous `llama3-8b-8192` model is retired; Groq lists its shutdown date as
+August 30, 2025.
 
-Start the LiveKit worker in a terminal:
+## Run locally
+
+Open **two PowerShell terminals**, each in the repository directory.
+
+Terminal 1 — LiveKit worker:
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 python bot.py dev
 ```
 
-In a second terminal, start the local web app:
+Terminal 2 — web interface and token service:
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 python app.py
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000), enter a room name, and
-select **Connect**. Allow microphone access to talk; the message box sends chat
-text into the same LiveKit room. The page displays your messages and the
-assistant's synchronized text while playing its audio response.
+Open <http://127.0.0.1:8000>, enter a room name, and connect. The microphone
+stays off until you click **Mic**. Use **Send** for a text-only reply, or
+activate the microphone to speak and hear a spoken reply.
 
-For the browser to reach LiveKit, set `LIVEKIT_URL` to a URL reachable from the
-browser (usually a `wss://` LiveKit Cloud URL). Keep API keys and secrets in
-`.env`; the frontend receives a room-scoped, one-hour token from `/api/token`.
-The worker must be running and registered with the same agent name configured
-in `bot.py` (`CA_uV5hQQhZbLRF`). The room token requests dispatch of this agent
-when the room is created.
+The `LIVEKIT_URL` must be reachable from both the worker and the browser. The
+web app creates a room-scoped token and dispatches the worker registered as
+`CA_uV5hQQhZbLRF`.
 
-Run the separate text-only console client if needed:
+## Run the workflow smoke test
 
 ```powershell
-python main.py
-```
-
-## Tests
-
-Run the workflow smoke test:
-
-```powershell
+.\.venv\Scripts\Activate.ps1
 python test_e2e.py
 ```
 
-The test invokes Groq and therefore requires `GROQ_API_KEY`. It uses the
-in-memory demo tools and one checkpointer thread for its sample conversation.
-
-## Operational notes
-
-- The LangGraph checkpointer is in-memory only. Use a durable LangGraph
-  checkpointer (for example, Postgres) for restart-safe sessions.
-- Keep a stable, distinct `thread_id` for each customer conversation to prevent
-  conversations from sharing history.
-- Avoid logging credentials or customer delivery addresses. Add appropriate
-  authentication, authorization, privacy, retention, and observability controls
-  before production deployment.
-- The browser loads the LiveKit JavaScript client from jsDelivr and requires
-  network access to LiveKit, Deepgram, and Groq.
+The smoke test makes live Groq requests. It uses the in-memory demo tools and
+does not require a LiveKit room or Deepgram request.

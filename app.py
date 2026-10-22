@@ -19,7 +19,7 @@ logger = logging.getLogger("ecommerce-voice-frontend")
 app = FastAPI(title="E-Commerce Voice Assistant")
 INDEX_FILE = Path(__file__).parent / "frontend" / "index.html"
 ROOM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-AGENT_NAME = "CA_uV5hQQhZbLRF"
+AGENT_NAME = Config.AGENT_NAME
 
 
 class TokenRequest(BaseModel):

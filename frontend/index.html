@@ -150,6 +150,11 @@
       }
       .composer input { flex: 1; }
       .composer button { min-width: 86px; }
+      .composer button.voice-button { min-width: 48px; padding: 0 13px; }
+      .composer button.voice-button[aria-pressed="true"] {
+        background: #e45d77;
+        color: #fff;
+      }
       .hint { margin: 12px 4px 0; color: #7f8aa1; font-size: .78rem; line-height: 1.5; }
       #audio-playback { position: absolute; width: 1px; height: 1px; overflow: hidden; }
       .sr-only {
@@ -180,7 +185,7 @@
       <header>
         <p class="eyebrow">LiveKit · Groq · Deepgram</p>
         <h1>E-commerce assistant</h1>
-        <p class="subhead">Ask about product stock, place an order, or track one. Talk or type; replies appear here and are spoken aloud.</p>
+        <p class="subhead">Ask about product stock, place an order, or track one. Text replies stay in chat; activate the microphone to talk and hear spoken replies.</p>
       </header>
 
       <section class="panel" aria-label="Assistant chat">
@@ -198,17 +203,18 @@
         </div>
 
         <div id="history" class="history" role="log" aria-live="polite" aria-relevant="additions text">
-          <div id="empty-state" class="empty">Connect to a room to start a conversation.<br>Allow microphone access to speak.</div>
+          <div id="empty-state" class="empty">Connect to a room to start a conversation.<br>Use the microphone button whenever you want to speak.</div>
         </div>
 
         <form id="composer" class="composer">
           <label class="sr-only" for="message-input">Message</label>
           <input id="message-input" type="text" placeholder="Type a message…" autocomplete="off" maxlength="2000" disabled>
           <button id="send-button" type="submit" disabled>Send</button>
+          <button id="voice-button" class="secondary voice-button" type="button" aria-label="Start voice input" aria-pressed="false" disabled>Mic</button>
         </form>
       </section>
 
-      <p class="hint">Microphone audio and text messages are sent to the connected LiveKit room. Keep your LiveKit and provider API secrets on the server; this page receives only a short-lived room token.</p>
+      <p class="hint">Typed messages receive text-only replies. Click Mic to start or stop sending audio; voice replies are spoken and transcribed. Keep your LiveKit and provider API secrets on the server; this page receives only a short-lived room token.</p>
       <div id="audio-playback" aria-hidden="true"></div>
     </main>
 
@@ -229,6 +235,7 @@
       const composer = document.querySelector("#composer");
       const messageInput = document.querySelector("#message-input");
       const sendButton = document.querySelector("#send-button");
+      const voiceButton = document.querySelector("#voice-button");
       const audioPlayback = document.querySelector("#audio-playback");
 
       let room = null;
@@ -247,6 +254,12 @@
         roomInput.disabled = value;
         messageInput.disabled = !value;
         sendButton.disabled = !value;
+        voiceButton.disabled = !value;
+        if (!value) {
+          voiceButton.setAttribute("aria-pressed", "false");
+          voiceButton.setAttribute("aria-label", "Start voice input");
+          voiceButton.textContent = "Mic";
+        }
         if (!value) {
           setStatus("Not connected", false);
         }
@@ -287,6 +300,26 @@
           return;
         }
         showAssistantTranscript(segments);
+      }
+
+      function onAssistantText(text) {
+        if (typeof text === "string" && text.trim()) {
+          addMessage("assistant", text.trim());
+        }
+      }
+
+      function onDataReceived(payload, participant, _kind, topic) {
+        if (topic !== "assistant.chat" || !participant) return;
+
+        try {
+          const packet = JSON.parse(new TextDecoder().decode(payload));
+          if (packet.type === "assistant_response" && typeof packet.text === "string") {
+            onAssistantText(packet.text);
+          }
+        } catch (error) {
+          console.error("Could not decode assistant data message:", error);
+          setStatus("Could not display the text response.");
+        }
       }
 
       function onTrackSubscribed(track) {
@@ -339,6 +372,7 @@
           room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
           room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
           room.on(RoomEvent.TranscriptionReceived, onTranscription);
+          room.on(RoomEvent.DataReceived, onDataReceived);
           room.on(RoomEvent.Disconnected, () => {
             room = null;
             setConnected(false);
@@ -354,12 +388,6 @@
             await room.startAudio();
           } catch (error) {
             console.warn("Browser audio playback needs a user gesture:", error);
-          }
-          try {
-            await room.localParticipant.setMicrophoneEnabled(true);
-          } catch (error) {
-            console.error("Microphone could not be enabled:", error);
-            setStatus("Connected · microphone unavailable; text chat is ready.");
           }
           messageInput.focus();
         } catch (error) {
@@ -380,7 +408,15 @@
 
         sendButton.disabled = true;
         try {
-          await room.localParticipant.sendText(text, { topic: "lk.chat" });
+          const packet = {
+            type: "chat",
+            request_id: crypto.randomUUID(),
+            text,
+          };
+          await room.localParticipant.publishData(
+            new TextEncoder().encode(JSON.stringify(packet)),
+            { reliable: true, topic: "chat.user" },
+          );
           addMessage("user", text);
           messageInput.value = "";
           messageInput.focus();
@@ -389,6 +425,27 @@
           setStatus("Message could not be sent. Please try again.");
         } finally {
           sendButton.disabled = !connected;
+        }
+      });
+
+      voiceButton.addEventListener("click", async () => {
+        if (!room || !connected) return;
+        const starting = voiceButton.getAttribute("aria-pressed") !== "true";
+        voiceButton.disabled = true;
+        try {
+          await room.localParticipant.setMicrophoneEnabled(starting);
+          voiceButton.setAttribute("aria-pressed", String(starting));
+          voiceButton.setAttribute(
+            "aria-label",
+            starting ? "Stop voice input" : "Start voice input",
+          );
+          voiceButton.textContent = starting ? "Stop" : "Mic";
+          setStatus(starting ? "Microphone active · speak now" : "Voice input stopped");
+        } catch (error) {
+          console.error("Could not change microphone state:", error);
+          setStatus("Microphone unavailable; text chat is still ready.");
+        } finally {
+          voiceButton.disabled = !connected;
         }
       });
 
