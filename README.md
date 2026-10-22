@@ -1,9 +1,9 @@
 # E-Commerce Multi-Agent Voice Assistant
 
 A Python voice assistant that uses LiveKit for real-time audio, Deepgram for
-speech recognition, Gemini 2.5 Flash through LangChain and LangGraph for
-supervised tool routing, Google Cloud Text-to-Speech, and Silero voice activity
-detection.
+speech recognition, Groq's Llama 3.1 8B Instant through LangChain and LangGraph
+for supervised tool routing, Google Cloud Text-to-Speech, and Silero voice
+activity detection.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ Microphone / LiveKit room
  Deepgram STT + Silero VAD
           |
           v
- LangGraph supervisor (Gemini 2.5 Flash)
+ LangGraph supervisor (Groq Llama 3.1 8B Instant)
        /       |        \
  inventory   create    track
    tool       order     order
@@ -34,7 +34,7 @@ the console app uses one stable ID for its running session.
 
 ## Features
 
-- Gemini-powered natural-language routing and follow-up questions.
+- Groq-powered natural-language routing and follow-up questions.
 - Inventory checks and order creation with positive-quantity, SKU, address,
   and stock validation.
 - Order tracking by order ID.
@@ -56,7 +56,7 @@ not take payment, reserve real stock, or dispatch shipments.
 
 - Python 3.10 or newer.
 - A LiveKit Cloud project or self-hosted LiveKit server.
-- API credentials for Google Gemini and Deepgram, plus Google Cloud
+- API credentials for Groq and Deepgram, plus Google Cloud
   Text-to-Speech credentials.
 - The Python dependencies in `requirements.txt`.
 
@@ -79,10 +79,9 @@ LIVEKIT_URL=wss://your-livekit-host
 LIVEKIT_API_KEY=your-livekit-api-key
 LIVEKIT_API_SECRET=your-livekit-api-secret
 DEEPGRAM_API_KEY=your-deepgram-api-key
-GOOGLE_API_KEY=your-google-api-key
+GROQ_API_KEY=your-groq-api-key
 
-# Optional model and voice configuration
-GEMINI_MODEL=gemini-1.5-flash-latest
+# Optional voice configuration
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
 GOOGLE_TTS_LANGUAGE=en-US
@@ -93,11 +92,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/google-cloud-service-account.json
 LIVEKIT_AGENT_NAME=ecommerce-voice-assistant
 ```
 
-`GEMINI_API_KEY` is also accepted in place of `GOOGLE_API_KEY`.
 Google Cloud TTS uses Application Default Credentials. Configure a service
 account file via `GOOGLE_APPLICATION_CREDENTIALS` or provide ADC through the
-deployment platform's workload identity. The Gemini API key alone does not
-authenticate Google Cloud Text-to-Speech.
+deployment platform's workload identity. The Groq API key does not authenticate
+Google Cloud Text-to-Speech.
 
 ## Run
 
@@ -132,9 +130,8 @@ Run the workflow smoke test:
 python test_e2e.py
 ```
 
-The test invokes Gemini and therefore requires `GOOGLE_API_KEY` or
-`GEMINI_API_KEY`. It uses the in-memory demo tools and one checkpointer thread
-for its sample conversation.
+The test invokes Groq and therefore requires `GROQ_API_KEY`. It uses the
+in-memory demo tools and one checkpointer thread for its sample conversation.
 
 ## Operational notes
 
@@ -145,5 +142,5 @@ for its sample conversation.
 - Avoid logging credentials or customer delivery addresses. Add appropriate
   authentication, authorization, privacy, retention, and observability controls
   before production deployment.
-- The voice worker requires network access to LiveKit, Deepgram, Google, and
-  Google Cloud Text-to-Speech; text-only console mode only needs Gemini.
+- The voice worker requires network access to LiveKit, Deepgram, Groq, and
+  Google Cloud Text-to-Speech; text-only console mode only needs Groq.

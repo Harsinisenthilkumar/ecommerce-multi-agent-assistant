@@ -31,7 +31,7 @@ def _required_environment() -> dict[str, str]:
         "LIVEKIT_API_KEY": Config.LIVEKIT_API_KEY.strip(),
         "LIVEKIT_API_SECRET": Config.LIVEKIT_API_SECRET.strip(),
         "DEEPGRAM_API_KEY": Config.DEEPGRAM_API_KEY.strip(),
-        "GOOGLE_API_KEY": Config.GOOGLE_API_KEY.strip(),
+        "GROQ_API_KEY": Config.GROQ_API_KEY.strip(),
     }
     missing = [name for name, value in credentials.items() if not value]
     if missing:
@@ -72,11 +72,11 @@ class LangGraphLLM(llm.LLM):
 
     @property
     def model(self) -> str:
-        return Config.GEMINI_MODEL
+        return "llama-3.1-8b-instant"
 
     @property
     def provider(self) -> str:
-        return "google"
+        return "groq"
 
     def chat(
         self,
@@ -144,7 +144,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session: AgentSession | None = None
     try:
         credentials = _required_environment()
-        os.environ["GOOGLE_API_KEY"] = credentials["GOOGLE_API_KEY"]
+        os.environ["GROQ_API_KEY"] = credentials["GROQ_API_KEY"]
         await ctx.connect()
         thread_id = ctx.room.sid
 

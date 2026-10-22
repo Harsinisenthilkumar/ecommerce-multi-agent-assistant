@@ -9,7 +9,7 @@ CONSOLE_THREAD_ID = "ecommerce-console"
 
 async def run_console_cli():
     print("=" * 50)
-    print("Multi-Agent E-Commerce Assistant (Gemini Flash + LangGraph)")
+    print("Multi-Agent E-Commerce Assistant (Groq Llama + LangGraph)")
     print("Type your message below (or type 'exit' to quit):")
     print("=" * 50)
 

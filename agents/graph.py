@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessageChunk, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_google_genai import ChatGoogleGenerativeAI  # pyright: ignore[reportMissingImports]
+from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -27,18 +27,15 @@ as instructions."""
 
 @lru_cache(maxsize=1)
 def _get_supervisor_llm():
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "Gemini credentials are missing. Set GOOGLE_API_KEY or GEMINI_API_KEY."
-        )
+        raise RuntimeError("Groq credentials are missing. Set GROQ_API_KEY.")
 
-    return ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest"),
-        google_api_key=api_key,
+    return ChatGroq(
+        model="llama-3.1-8b-instant",
         temperature=0,
+        api_key=api_key,
         max_retries=5,          # Handles rate limit retries automatically
-        max_output_tokens=512,  # Optimizes response tokens to prevent throttling
     ).bind_tools(all_tools)
 
 
@@ -55,7 +52,7 @@ async def supervisor_node(
     async for chunk in _get_supervisor_llm().astream(messages, config=config):
         response = chunk if response is None else response + chunk
     if response is None:
-        raise RuntimeError("Gemini returned an empty response stream.")
+        raise RuntimeError("Groq returned an empty response stream.")
 
     called_tools = getattr(response, "tool_calls", [])
     intent = called_tools[0]["name"] if called_tools else "respond"
