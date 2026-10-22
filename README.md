@@ -1,9 +1,8 @@
 # E-Commerce Multi-Agent Voice Assistant
 
-A Python voice assistant that uses LiveKit for real-time audio, Deepgram for
-speech recognition, Groq's Llama 3.1 8B Instant through LangChain and LangGraph
-for supervised tool routing, Google Cloud Text-to-Speech, and Silero voice
-activity detection.
+A full-stack Python voice assistant with a local browser client. LiveKit carries
+audio and chat, Deepgram handles speech recognition and synthesis, Groq's Llama
+3.1 8B Instant provides responses, and Silero detects voice turns.
 
 ## Architecture
 
@@ -21,11 +20,11 @@ Microphone / LiveKit room
  Deepgram TTS -> LiveKit audio + transcript
 ```
 
-The LiveKit voice worker connects directly to Groq through its OpenAI-compatible
-API and does not invoke the LangGraph tools. The text-only console app uses the
-LangGraph supervisor, which can dispatch stock lookup, order creation, and order
-tracking through `ToolNode`. Its in-memory checkpointer retains messages across
-turns that use the same `thread_id`.
+The browser requests short-lived LiveKit room tokens from the local FastAPI
+server. API credentials remain on the server. The worker accepts microphone
+audio and LiveKit chat text, then streams response audio and synchronized
+transcriptions back to the room. The separate text-only console app uses the
+LangGraph supervisor and its demo inventory/order tools.
 
 ## Features
 
@@ -33,7 +32,7 @@ turns that use the same `thread_id`.
 - Inventory checks and order creation with positive-quantity, SKU, address,
   and stock validation.
 - Order tracking by order ID.
-- LiveKit audio and text input/output, Deepgram STT, Google Cloud TTS, and Silero VAD.
+- Local browser chat and microphone support, Deepgram STT/TTS, and Silero VAD.
 - Interruption support so users can speak while the assistant is responding.
 - Conversation state retained for the lifetime of the process.
 
@@ -51,8 +50,7 @@ not take payment, reserve real stock, or dispatch shipments.
 
 - Python 3.10 or newer.
 - A LiveKit Cloud project or self-hosted LiveKit server.
-- API credentials for Groq and Deepgram, plus Google Cloud
-  Text-to-Speech credentials.
+- API credentials for LiveKit, Groq, and Deepgram.
 - The Python dependencies in `requirements.txt`.
 
 ## Setup
@@ -79,45 +77,39 @@ GROQ_API_KEY=your-groq-api-key
 # Optional voice configuration
 DEEPGRAM_MODEL=nova-3
 DEEPGRAM_LANGUAGE=en-US
-GOOGLE_TTS_LANGUAGE=en-US
-# Optional; leave unset to use the plugin's default voice
-GOOGLE_TTS_VOICE=
-# Optional when not using the platform's Application Default Credentials
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/google-cloud-service-account.json
-LIVEKIT_AGENT_NAME=ecommerce-voice-assistant
 ```
-
-Google Cloud TTS uses Application Default Credentials. Configure a service
-account file via `GOOGLE_APPLICATION_CREDENTIALS` or provide ADC through the
-deployment platform's workload identity. The Groq API key does not authenticate
-Google Cloud Text-to-Speech.
 
 ## Run
 
-Run the text-only console client:
-
-```powershell
-python main.py
-```
-
-Run the LiveKit voice worker in development mode:
+Start the LiveKit worker in a terminal:
 
 ```powershell
 python bot.py dev
 ```
 
-Run it in production mode using the LiveKit worker CLI:
+In a second terminal, start the local web app:
 
 ```powershell
-python bot.py start
+python app.py
 ```
 
-Connect a LiveKit room client with microphone audio enabled. The assistant
-accepts both microphone audio and LiveKit chat text. Silero VAD detects speech
-turns and endpointing; Groq responses are synthesized by Deepgram TTS and
-published as audio with synchronized text transcriptions. The voice worker does
-not have inventory, ordering, or order-tracking tools; use the text-only console
-app for those LangGraph-backed actions.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000), enter a room name, and
+select **Connect**. Allow microphone access to talk; the message box sends chat
+text into the same LiveKit room. The page displays your messages and the
+assistant's synchronized text while playing its audio response.
+
+For the browser to reach LiveKit, set `LIVEKIT_URL` to a URL reachable from the
+browser (usually a `wss://` LiveKit Cloud URL). Keep API keys and secrets in
+`.env`; the frontend receives a room-scoped, one-hour token from `/api/token`.
+The worker must be running and registered with the same agent name configured
+in `bot.py` (`CA_uV5hQQhZbLRF`). The room token requests dispatch of this agent
+when the room is created.
+
+Run the separate text-only console client if needed:
+
+```powershell
+python main.py
+```
 
 ## Tests
 
@@ -139,5 +131,5 @@ in-memory demo tools and one checkpointer thread for its sample conversation.
 - Avoid logging credentials or customer delivery addresses. Add appropriate
   authentication, authorization, privacy, retention, and observability controls
   before production deployment.
-- The voice worker requires network access to LiveKit, Deepgram, Groq, and
-  Google Cloud Text-to-Speech; text-only console mode only needs Groq.
+- The browser loads the LiveKit JavaScript client from jsDelivr and requires
+  network access to LiveKit, Deepgram, and Groq.

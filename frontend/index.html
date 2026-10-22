@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101522">
+    <title>LiveKit Voice Assistant</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #101522;
+        color: #edf2ff;
+        font-synthesis: none;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        background:
+          radial-gradient(ellipse at 15% 0%, rgba(92, 111, 255, .2), transparent 38rem),
+          #101522;
+      }
+
+      button, input { font: inherit; }
+
+      .shell {
+        width: min(100% - 32px, 880px);
+        margin: 0 auto;
+        padding: 52px 0;
+      }
+
+      header { margin-bottom: 28px; }
+      .eyebrow {
+        margin: 0 0 10px;
+        color: #9aa8ff;
+        font-size: .75rem;
+        font-weight: 750;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+      }
+      h1 { margin: 0; font-size: clamp(1.8rem, 5vw, 2.7rem); letter-spacing: -.04em; }
+      .subhead { max-width: 600px; margin: 12px 0 0; color: #aab3c7; line-height: 1.6; }
+
+      .panel {
+        overflow: hidden;
+        border: 1px solid #293149;
+        border-radius: 20px;
+        background: rgba(22, 29, 46, .92);
+        box-shadow: 0 28px 80px rgba(0, 0, 0, .28);
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        gap: 12px;
+        padding: 18px;
+        border-bottom: 1px solid #293149;
+      }
+
+      .room-field { flex: 1 1 190px; }
+      label { display: block; margin: 0 0 7px; color: #aab3c7; font-size: .8rem; }
+      input {
+        width: 100%;
+        min-height: 44px;
+        padding: 0 13px;
+        border: 1px solid #36415e;
+        border-radius: 10px;
+        outline: none;
+        background: #111827;
+        color: #edf2ff;
+      }
+      input:focus { border-color: #8a98ff; box-shadow: 0 0 0 3px rgba(138, 152, 255, .15); }
+      button {
+        min-height: 44px;
+        padding: 0 17px;
+        border: 0;
+        border-radius: 10px;
+        background: #7382ff;
+        color: #0f1420;
+        font-weight: 750;
+        cursor: pointer;
+        transition: filter .15s, transform .15s;
+      }
+      button:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+      button:disabled { cursor: not-allowed; opacity: .48; }
+      button.secondary { border: 1px solid #3a4563; background: #222b40; color: #edf2ff; }
+
+      .connection {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 24px;
+        margin-left: auto;
+        color: #9ea9c0;
+        font-size: .85rem;
+      }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: #718096; }
+      .dot.connected { background: #46d49c; box-shadow: 0 0 12px rgba(70, 212, 156, .65); }
+
+      .history {
+        display: flex;
+        min-height: 350px;
+        max-height: min(56vh, 560px);
+        flex-direction: column;
+        gap: 14px;
+        overflow-y: auto;
+        padding: 22px 18px;
+      }
+      .empty {
+        display: grid;
+        flex: 1;
+        place-items: center;
+        color: #78849c;
+        text-align: center;
+        line-height: 1.6;
+      }
+      .message { max-width: min(82%, 620px); }
+      .message.user { align-self: flex-end; }
+      .message.assistant { align-self: flex-start; }
+      .message .role {
+        margin: 0 0 5px 3px;
+        color: #8c98b1;
+        font-size: .72rem;
+        font-weight: 700;
+        letter-spacing: .07em;
+        text-transform: uppercase;
+      }
+      .bubble {
+        padding: 11px 14px;
+        border: 1px solid #303b55;
+        border-radius: 14px;
+        background: #202a40;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .user .bubble { border-color: #6978e8; background: #5c6ae1; color: #fff; }
+      .message.pending .bubble { color: #b7c0d4; }
+
+      .composer {
+        display: flex;
+        gap: 10px;
+        padding: 16px 18px;
+        border-top: 1px solid #293149;
+        background: rgba(17, 24, 39, .6);
+      }
+      .composer input { flex: 1; }
+      .composer button { min-width: 86px; }
+      .hint { margin: 12px 4px 0; color: #7f8aa1; font-size: .78rem; line-height: 1.5; }
+      #audio-playback { position: absolute; width: 1px; height: 1px; overflow: hidden; }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 560px) {
+        .shell { width: min(100% - 20px, 880px); padding: 28px 0; }
+        .toolbar { align-items: stretch; }
+        .toolbar button { flex: 1; }
+        .connection { width: 100%; margin: 2px 0 0; }
+        .history { min-height: 42vh; padding: 16px 12px; }
+        .composer { padding: 12px; }
+        .composer button { min-width: 72px; padding: 0 12px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">LiveKit · Groq · Deepgram</p>
+        <h1>Voice &amp; text assistant</h1>
+        <p class="subhead">Join a room to talk with the assistant or send a message. Replies are shown here and spoken aloud.</p>
+      </header>
+
+      <section class="panel" aria-label="Assistant chat">
+        <div class="toolbar">
+          <div class="room-field">
+            <label for="room-name">Room</label>
+            <input id="room-name" value="ecommerce-demo" maxlength="128" autocomplete="off">
+          </div>
+          <button id="connect-button" type="button">Connect</button>
+          <button id="disconnect-button" class="secondary" type="button" disabled>Disconnect</button>
+          <div class="connection" role="status" aria-live="polite">
+            <span id="connection-dot" class="dot"></span>
+            <span id="connection-status">Not connected</span>
+          </div>
+        </div>
+
+        <div id="history" class="history" role="log" aria-live="polite" aria-relevant="additions text">
+          <div id="empty-state" class="empty">Connect to a room to start a conversation.<br>Allow microphone access to speak.</div>
+        </div>
+
+        <form id="composer" class="composer">
+          <label class="sr-only" for="message-input">Message</label>
+          <input id="message-input" type="text" placeholder="Type a message…" autocomplete="off" maxlength="2000" disabled>
+          <button id="send-button" type="submit" disabled>Send</button>
+        </form>
+      </section>
+
+      <p class="hint">Microphone audio and text messages are sent to the connected LiveKit room. Keep your LiveKit and provider API secrets on the server; this page receives only a short-lived room token.</p>
+      <div id="audio-playback" aria-hidden="true"></div>
+    </main>
+
+    <script type="module">
+      import {
+        Room,
+        RoomEvent,
+        Track,
+      } from "https://cdn.jsdelivr.net/npm/livekit-client@2.15.6/dist/livekit-client.esm.mjs";
+
+      const roomInput = document.querySelector("#room-name");
+      const connectButton = document.querySelector("#connect-button");
+      const disconnectButton = document.querySelector("#disconnect-button");
+      const connectionDot = document.querySelector("#connection-dot");
+      const connectionStatus = document.querySelector("#connection-status");
+      const history = document.querySelector("#history");
+      const emptyState = document.querySelector("#empty-state");
+      const composer = document.querySelector("#composer");
+      const messageInput = document.querySelector("#message-input");
+      const sendButton = document.querySelector("#send-button");
+      const audioPlayback = document.querySelector("#audio-playback");
+
+      let room = null;
+      let connected = false;
+      const transcriptElements = new Map();
+
+      function setStatus(text, isConnected = connected) {
+        connectionStatus.textContent = text;
+        connectionDot.classList.toggle("connected", isConnected);
+      }
+
+      function setConnected(value) {
+        connected = value;
+        connectButton.disabled = value;
+        disconnectButton.disabled = !value;
+        roomInput.disabled = value;
+        messageInput.disabled = !value;
+        sendButton.disabled = !value;
+        if (!value) {
+          setStatus("Not connected", false);
+        }
+      }
+
+      function addMessage(role, text, { pending = false } = {}) {
+        emptyState?.remove();
+        const wrapper = document.createElement("article");
+        wrapper.className = `message ${role}${pending ? " pending" : ""}`;
+        const label = document.createElement("div");
+        label.className = "role";
+        label.textContent = role === "user" ? "You" : "Assistant";
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = text;
+        wrapper.append(label, bubble);
+        history.append(wrapper);
+        history.scrollTop = history.scrollHeight;
+        return wrapper;
+      }
+
+      function showAssistantTranscript(segments) {
+        for (const segment of segments) {
+          if (!segment.text?.trim()) continue;
+          let message = transcriptElements.get(segment.id);
+          if (!message) {
+            message = addMessage("assistant", segment.text);
+            transcriptElements.set(segment.id, message);
+          } else {
+            message.querySelector(".bubble").textContent = segment.text;
+            history.scrollTop = history.scrollHeight;
+          }
+        }
+      }
+
+      function onTranscription(segments, participant) {
+        if (participant && participant.identity === room?.localParticipant.identity) {
+          return;
+        }
+        showAssistantTranscript(segments);
+      }
+
+      function onTrackSubscribed(track) {
+        if (track.kind !== Track.Kind.Audio) return;
+        const element = track.attach();
+        element.autoplay = true;
+        audioPlayback.append(element);
+      }
+
+      function onTrackUnsubscribed(track) {
+        if (track.kind !== Track.Kind.Audio) return;
+        for (const element of track.detach()) element.remove();
+      }
+
+      async function disconnect() {
+        if (!room) return;
+        setStatus("Disconnecting…");
+        try {
+          await room.localParticipant.setMicrophoneEnabled(false);
+        } catch (error) {
+          console.warn("Could not disable microphone:", error);
+        }
+        await room.disconnect();
+        room = null;
+        setConnected(false);
+        audioPlayback.replaceChildren();
+      }
+
+      async function connect() {
+        const requestedRoom = roomInput.value.trim();
+        if (!requestedRoom) {
+          setStatus("Enter a room name.", false);
+          return;
+        }
+
+        connectButton.disabled = true;
+        setStatus("Getting room access…", false);
+        try {
+          const response = await fetch("/api/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ room: requestedRoom }),
+          });
+          const result = await response.json();
+          if (!response.ok) {
+            throw new Error(result.detail || "Could not create room access.");
+          }
+
+          room = new Room({ adaptiveStream: true, dynacast: true });
+          room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+          room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+          room.on(RoomEvent.TranscriptionReceived, onTranscription);
+          room.on(RoomEvent.Disconnected, () => {
+            room = null;
+            setConnected(false);
+            audioPlayback.replaceChildren();
+          });
+
+          setStatus("Connecting to room…", false);
+          await room.connect(result.url, result.token);
+          setConnected(true);
+          setStatus(`Connected to ${result.room}`);
+
+          try {
+            await room.startAudio();
+          } catch (error) {
+            console.warn("Browser audio playback needs a user gesture:", error);
+          }
+          try {
+            await room.localParticipant.setMicrophoneEnabled(true);
+          } catch (error) {
+            console.error("Microphone could not be enabled:", error);
+            setStatus("Connected · microphone unavailable; text chat is ready.");
+          }
+          messageInput.focus();
+        } catch (error) {
+          console.error("LiveKit connection failed:", error);
+          if (room) {
+            await room.disconnect().catch(() => {});
+            room = null;
+          }
+          setConnected(false);
+          setStatus(error.message || "Connection failed.", false);
+        }
+      }
+
+      composer.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const text = messageInput.value.trim();
+        if (!text || !room || !connected) return;
+
+        sendButton.disabled = true;
+        try {
+          await room.localParticipant.sendText(text, { topic: "lk.chat" });
+          addMessage("user", text);
+          messageInput.value = "";
+          messageInput.focus();
+        } catch (error) {
+          console.error("Failed to send chat message:", error);
+          setStatus("Message could not be sent. Please try again.");
+        } finally {
+          sendButton.disabled = !connected;
+        }
+      });
+
+      connectButton.addEventListener("click", connect);
+      disconnectButton.addEventListener("click", disconnect);
+      window.addEventListener("beforeunload", () => {
+        if (room) void room.disconnect();
+      });
+    </script>
+  </body>
+</html>
