@@ -14,27 +14,22 @@ Microphone / LiveKit room
  Deepgram STT + Silero VAD
           |
           v
- LangGraph supervisor (Groq Llama 3.1 8B Instant)
-       /       |        \
- inventory   create    track
-   tool       order     order
-       \       |        /
-          v
- LangGraph response stream
+ LiveKit OpenAI-compatible LLM
+ (Groq Llama 3.1 8B Instant)
           |
           v
- Google Cloud TTS -> LiveKit audio + transcript
+ Deepgram TTS -> LiveKit audio + transcript
 ```
 
-The supervisor selects from three tools: stock lookup, order creation, and
-order tracking. Tool calls are dispatched by LangGraph's `ToolNode`. The
-graph's in-memory checkpointer retains messages across turns that use the same
-`thread_id`. The voice bot uses the LiveKit room SID as its conversation ID;
-the console app uses one stable ID for its running session.
+The LiveKit voice worker connects directly to Groq through its OpenAI-compatible
+API and does not invoke the LangGraph tools. The text-only console app uses the
+LangGraph supervisor, which can dispatch stock lookup, order creation, and order
+tracking through `ToolNode`. Its in-memory checkpointer retains messages across
+turns that use the same `thread_id`.
 
 ## Features
 
-- Groq-powered natural-language routing and follow-up questions.
+- Groq-powered voice responses and LangGraph tool routing in the console app.
 - Inventory checks and order creation with positive-quantity, SKU, address,
   and stock validation.
 - Order tracking by order ID.
@@ -118,9 +113,10 @@ python bot.py start
 ```
 
 Connect a LiveKit room client with microphone audio enabled. The assistant
-transcribes the user's speech, routes the text through LangGraph, then streams
-the response text to LiveKit's TTS pipeline and publishes the generated audio
-and transcript.
+transcribes the user's speech, sends it directly to Groq, then streams the
+response text to LiveKit's TTS pipeline and publishes the generated audio and
+transcript. The voice worker does not have inventory, ordering, or order-tracking
+tools; use the text-only console app for those LangGraph-backed actions.
 
 ## Tests
 

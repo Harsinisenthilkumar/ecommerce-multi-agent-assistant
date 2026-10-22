@@ -2,24 +2,18 @@ import asyncio
 import logging
 import os
 from typing import Any
-from uuid import uuid4
 
-from langchain_core.messages import AIMessage, HumanMessage
-from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
     WorkerOptions,
     cli,
-    llm,
     room_io,
 )
-from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
-from livekit.plugins import deepgram, silero
+from livekit.plugins import deepgram, openai, silero
 
 from config import Config
-from agents.graph import app_graph
 
 logger = logging.getLogger("ecommerce-voice-assistant")
 
@@ -41,112 +35,11 @@ def _required_environment() -> dict[str, str]:
     return credentials
 
 
-def _text_from_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            part if isinstance(part, str) else part.get("text", "")
-            for part in content
-            if isinstance(part, str)
-            or (isinstance(part, dict) and isinstance(part.get("text"), str))
-        )
-    return ""
-
-
-def _latest_user_text(chat_ctx: llm.ChatContext) -> tuple[str, str]:
-    for item in reversed(chat_ctx.items):
-        if item.type == "message" and item.role == "user":
-            text = item.text_content.strip()
-            if text:
-                return text, f"livekit-{item.id or uuid4().hex}"
-    raise ValueError("The incoming LiveKit turn does not contain user text.")
-
-
-class LangGraphLLM(llm.LLM):
-    """LiveKit LLM adapter that runs the conversation through the LangGraph."""
-
-    def __init__(self, thread_id: str) -> None:
-        super().__init__()
-        self.thread_id = thread_id
-
-    @property
-    def model(self) -> str:
-        return "llama-3.1-8b-instant"
-
-    @property
-    def provider(self) -> str:
-        return "groq"
-
-    def chat(
-        self,
-        *,
-        chat_ctx: llm.ChatContext,
-        tools: list[llm.Tool] | None = None,
-        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-        **kwargs: Any,
-    ) -> llm.LLMStream:
-        if kwargs:
-            logger.debug(
-                "LangGraph adapter does not use LiveKit-specific LLM options: %s",
-                ", ".join(sorted(kwargs)),
-            )
-        return _LangGraphStream(
-            self,
-            chat_ctx=chat_ctx,
-            tools=tools or [],
-            conn_options=conn_options,
-        )
-
-
-class _LangGraphStream(llm.LLMStream):
-    async def _run(self) -> None:
-        try:
-            user_text, message_id = _latest_user_text(self._chat_ctx)
-            config = {"configurable": {"thread_id": self._llm.thread_id}}
-            graph_input = {
-                "messages": [HumanMessage(id=message_id, content=user_text)]
-            }
-            response_started = False
-
-            async for message_chunk, metadata in app_graph.astream(
-                graph_input,
-                config=config,
-                stream_mode="messages",
-            ):
-                if not isinstance(message_chunk, AIMessage):
-                    continue
-                if getattr(message_chunk, "tool_call_chunks", None):
-                    continue
-
-                text = _text_from_content(message_chunk.content)
-                if not text:
-                    continue
-
-                response_started = True
-                self._event_ch.send_nowait(
-                    llm.ChatChunk(
-                        id=message_id,
-                        delta=llm.ChoiceDelta(content=text),
-                    )
-                )
-
-            if not response_started:
-                raise RuntimeError("LangGraph completed without producing a text reply.")
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("LangGraph failed while generating a response.")
-            raise
-
-
 async def entrypoint(ctx: JobContext) -> None:
     session: AgentSession | None = None
     try:
         credentials = _required_environment()
-        os.environ["GROQ_API_KEY"] = credentials["GROQ_API_KEY"]
         await ctx.connect()
-        thread_id = ctx.room.sid
 
         stt = deepgram.STT(
             model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
@@ -158,10 +51,15 @@ async def entrypoint(ctx: JobContext) -> None:
             api_key=credentials["DEEPGRAM_API_KEY"],
         )
         vad_instance = await asyncio.to_thread(silero.VAD.load)
+        groq_llm = openai.LLM(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=credentials["GROQ_API_KEY"],
+            model="llama-3.1-8b-instant",
+        )
 
         session = AgentSession(
             stt=stt,
-            llm=LangGraphLLM(thread_id=thread_id),
+            llm=groq_llm,
             tts=tts,
             vad=vad_instance,
             allow_interruptions=True,
@@ -190,8 +88,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
         assistant = Agent(
             instructions=(
-                "You are a concise e-commerce voice assistant. Wait for the user "
-                "to speak or type, then answer using the connected LangGraph."
+                "You are a concise e-commerce assistant. You do not have access "
+                "to inventory, ordering, or order-tracking tools. Do not claim "
+                "to check stock, place orders, or retrieve order status."
             ),
             allow_interruptions=True,
         )
