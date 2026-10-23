@@ -8,6 +8,20 @@ This project routes text and voice through one LangGraph multi-agent workflow:
 - **Voice input:** user activates the microphone -> LiveKit audio -> Silero VAD
   and Deepgram STT -> the same LangGraph workflow -> Deepgram TTS and a
   synchronized transcript.
+- **Browser voice fallback:** **Web voice** uses browser speech recognition and
+  speech synthesis, sending recognized speech over the same reliable text-chat
+  path. It is separate from **Mic** and does not change typed chat. Speech
+  recognition availability and processing depend on browser support and
+  browser privacy settings; a network connection may be required.
+- **Conversation RAG:** each browser connection gets a unique conversation ID
+  and a private LiveKit room. Successful text and voice turns are embedded
+  locally and stored in `data/conversation_memory.sqlite3`; relevant turns are
+  retrieved only within that conversation. Reconnecting starts a new
+  conversation and cannot retrieve the previous connection's memories. The
+  local BGE model is downloaded on first use to
+  `~/.cache/ecommerce-multi-agent/fastembed` (override with
+  `CONVERSATION_EMBEDDING_CACHE`). If memory storage or embedding is unavailable,
+  the assistant logs the issue and continues without retrieved history.
 - **Agents:** the LangGraph supervisor routes inventory, order creation, and
   order tracking requests to separate specialist agents. General questions are
   answered by the supervisor.
@@ -71,13 +85,32 @@ Terminal 2 — web interface and token service:
 python app.py
 ```
 
-Open <http://127.0.0.1:8000>, enter a room name, and connect. The microphone
-stays off until you click **Mic**. Use **Send** for a text-only reply, or
-activate the microphone to speak and hear a spoken reply.
+Open <http://127.0.0.1:8000>, enter a conversation label, and connect. Each
+connection creates a private LiveKit room and a fresh conversation ID; the
+label is only used to identify the session. The microphone stays off until you
+click **Mic**. Use **Send** for a text-only reply, **Mic** for LiveKit voice, or
+**Web voice** to use browser speech recognition and speech playback. Browser
+voice requires a supported browser and microphone permission.
 
 The `LIVEKIT_URL` must be reachable from both the worker and the browser. The
 web app creates a room-scoped token and dispatches the worker registered as
 `CA_uV5hQQhZbLRF`.
+
+Conversation memories contain user messages and assistant replies. They are
+stored locally, scoped by a unique ID generated for each browser connection,
+and retained until manually deleted. The UI shows the first eight characters
+of the ID; the worker logs the full ID when a session starts. To delete one
+conversation, run this in another PowerShell window from the repository:
+
+```powershell
+.\.venv\Scripts\python.exe -m agents.conversation_memory --clear-conversation <conversation-id>
+```
+
+The `--clear-room` option remains available to remove legacy room-scoped records
+from the earlier memory format.
+
+Set `CONVERSATION_MEMORY_DB` to use a different local SQLite file. The database
+is ignored by Git and should not be shared or committed.
 
 ## Run the workflow smoke test
 

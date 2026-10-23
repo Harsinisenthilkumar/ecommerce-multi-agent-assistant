@@ -25,12 +25,17 @@ from livekit.agents.types import (
 )
 from livekit.plugins import deepgram, silero
 
+from agents.conversation_memory import (
+    ConversationMemoryError,
+    ConversationMemoryStore,
+)
 from agents.graph import app_graph
 from config import Config
 
 load_dotenv()
 
 logger = logging.getLogger("ecommerce-livekit-agent")
+conversation_memory = ConversationMemoryStore()
 AGENT_NAME = Config.AGENT_NAME
 USER_CHAT_TOPIC = "chat.user"
 ASSISTANT_CHAT_TOPIC = "assistant.chat"
@@ -79,22 +84,54 @@ def _latest_user_text(chat_ctx: llm.ChatContext) -> str:
 
 async def _run_graph_turn(
     text: str,
-    thread_id: str,
+    conversation_id: str,
     turn_lock: asyncio.Lock,
 ) -> str:
     if not text.strip():
         raise ValueError("Cannot run a LangGraph turn without user text.")
 
     async with turn_lock:
+        try:
+            memories = await asyncio.to_thread(
+                conversation_memory.retrieve,
+                conversation_id,
+                text.strip(),
+            )
+        except ConversationMemoryError as exc:
+            logger.exception(
+                "Conversation memory retrieval failed for conversation %s; "
+                "continuing without retrieved history: %s",
+                conversation_id,
+                exc,
+            )
+            memories = []
+
         result = await app_graph.ainvoke(
-            {"messages": [HumanMessage(content=text.strip())]},
-            config={"configurable": {"thread_id": thread_id}},
+            {
+                "messages": [HumanMessage(content=text.strip())],
+                "retrieved_memories": memories,
+            },
+            config={"configurable": {"thread_id": conversation_id}},
         )
 
     for message in reversed(result.get("messages", [])):
         if getattr(message, "type", None) == "ai":
             answer = _text_from_content(getattr(message, "content", "")).strip()
             if answer:
+                try:
+                    await asyncio.to_thread(
+                        conversation_memory.save_turn,
+                        conversation_id,
+                        text.strip(),
+                        answer,
+                    )
+                except ConversationMemoryError as exc:
+                    logger.exception(
+                        "Conversation memory save failed for conversation %s; "
+                        "the response was still generated: %s",
+                        conversation_id,
+                        exc,
+                    )
                 return answer
     raise RuntimeError("LangGraph completed without an assistant text response.")
 
@@ -143,9 +180,13 @@ async def _publish_text_response(
 class LangGraphLLM(llm.LLM):
     """Expose the shared LangGraph workflow as a LiveKit speech LLM."""
 
-    def __init__(self, thread_id: str, turn_lock: asyncio.Lock) -> None:
+    def __init__(
+        self,
+        conversation_id: str,
+        turn_lock: asyncio.Lock,
+    ) -> None:
         super().__init__()
-        self._thread_id = thread_id
+        self._conversation_id = conversation_id
         self._turn_lock = turn_lock
 
     @property
@@ -193,7 +234,7 @@ class _LangGraphLLMStream(llm.LLMStream):
             tools=[],
             conn_options=conn_options,
         )
-        self._thread_id = graph_llm._thread_id
+        self._conversation_id = graph_llm._conversation_id
         self._turn_lock = graph_llm._turn_lock
 
     async def _run(self) -> None:
@@ -205,7 +246,7 @@ class _LangGraphLLMStream(llm.LLMStream):
             logger.info("Sending voice transcript to the LangGraph workflow.")
             answer = await _run_graph_turn(
                 user_text,
-                self._thread_id,
+                self._conversation_id,
                 self._turn_lock,
             )
             self._event_ch.send_nowait(
@@ -226,7 +267,14 @@ async def entrypoint(ctx: JobContext) -> None:
     text_tasks: set[asyncio.Task[None]] = set()
     try:
         credentials = _required_environment()
-        thread_id = f"livekit-{uuid4().hex}"
+        conversation_id = ctx.job.metadata.strip()
+        if not conversation_id:
+            conversation_id = f"livekit-{uuid4().hex}"
+            logger.warning(
+                "Agent dispatch did not include a conversation ID; "
+                "using a session-only ID %s.",
+                conversation_id,
+            )
         turn_lock = asyncio.Lock()
 
         try:
@@ -265,7 +313,11 @@ async def entrypoint(ctx: JobContext) -> None:
                     request_id,
                     packet.participant.identity,
                 )
-                answer = await _run_graph_turn(user_text, thread_id, turn_lock)
+                answer = await _run_graph_turn(
+                    user_text,
+                    conversation_id,
+                    turn_lock,
+                )
                 await _publish_text_response(ctx.room, request_id, answer)
             except asyncio.CancelledError:
                 raise
@@ -291,7 +343,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
         session = AgentSession(
             stt=stt,
-            llm=LangGraphLLM(thread_id, turn_lock),
+            llm=LangGraphLLM(conversation_id, turn_lock),
             tts=tts,
             vad=vad,
             allow_interruptions=True,
@@ -332,7 +384,11 @@ async def entrypoint(ctx: JobContext) -> None:
                 text_output=room_io.TextOutputOptions(sync_transcription=True),
             ),
         )
-        logger.info("Multi-agent assistant started in room %s.", ctx.room.name)
+        logger.info(
+            "Multi-agent assistant started in room %s with conversation %s.",
+            ctx.room.name,
+            conversation_id,
+        )
     except asyncio.CancelledError:
         for task in text_tasks:
             task.cancel()

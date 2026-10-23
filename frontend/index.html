@@ -148,13 +148,14 @@
         border-top: 1px solid #293149;
         background: rgba(17, 24, 39, .6);
       }
-      .composer input { flex: 1; }
+      .composer input { flex: 1; min-width: 0; }
       .composer button { min-width: 86px; }
       .composer button.voice-button { min-width: 48px; padding: 0 13px; }
       .composer button.voice-button[aria-pressed="true"] {
         background: #e45d77;
         color: #fff;
       }
+      .composer button.browser-voice-button { min-width: 92px; padding: 0 10px; }
       .hint { margin: 12px 4px 0; color: #7f8aa1; font-size: .78rem; line-height: 1.5; }
       #audio-playback { position: absolute; width: 1px; height: 1px; overflow: hidden; }
       .sr-only {
@@ -175,7 +176,7 @@
         .toolbar button { flex: 1; }
         .connection { width: 100%; margin: 2px 0 0; }
         .history { min-height: 42vh; padding: 16px 12px; }
-        .composer { padding: 12px; }
+        .composer { flex-wrap: wrap; padding: 12px; }
         .composer button { min-width: 72px; padding: 0 12px; }
       }
     </style>
@@ -185,13 +186,13 @@
       <header>
         <p class="eyebrow">LiveKit · Groq · Deepgram</p>
         <h1>E-commerce assistant</h1>
-        <p class="subhead">Ask about product stock, place an order, or track one. Text replies stay in chat; activate the microphone to talk and hear spoken replies.</p>
+        <p class="subhead">Ask about product stock, place an order, or track one. Use text chat, LiveKit Mic, or browser voice.</p>
       </header>
 
       <section class="panel" aria-label="Assistant chat">
         <div class="toolbar">
           <div class="room-field">
-            <label for="room-name">Room</label>
+            <label for="room-name">Conversation label</label>
             <input id="room-name" value="ecommerce-demo" maxlength="128" autocomplete="off">
           </div>
           <button id="connect-button" type="button">Connect</button>
@@ -203,7 +204,7 @@
         </div>
 
         <div id="history" class="history" role="log" aria-live="polite" aria-relevant="additions text">
-          <div id="empty-state" class="empty">Connect to a room to start a conversation.<br>Use the microphone button whenever you want to speak.</div>
+          <div id="empty-state" class="empty">Connect to a room to start a conversation.<br>Use Mic or Web voice whenever you want to speak.</div>
         </div>
 
         <form id="composer" class="composer">
@@ -211,10 +212,11 @@
           <input id="message-input" type="text" placeholder="Type a message…" autocomplete="off" maxlength="2000" disabled>
           <button id="send-button" type="submit" disabled>Send</button>
           <button id="voice-button" class="secondary voice-button" type="button" aria-label="Start voice input" aria-pressed="false" disabled>Mic</button>
+          <button id="browser-voice-button" class="secondary voice-button browser-voice-button" type="button" aria-label="Start browser voice input" aria-pressed="false" disabled>Web voice</button>
         </form>
       </section>
 
-      <p class="hint">Typed messages receive text-only replies. Click Mic to start or stop sending audio; voice replies are spoken and transcribed. Keep your LiveKit and provider API secrets on the server; this page receives only a short-lived room token.</p>
+      <p class="hint">Use Mic for LiveKit voice, or Web voice to use your browser's speech recognition and voice playback. Typed chat continues to work independently. Browser speech services may require an internet connection and follow your browser's privacy settings. Keep your LiveKit and provider API secrets on the server; this page receives only a short-lived room token.</p>
       <div id="audio-playback" aria-hidden="true"></div>
     </main>
 
@@ -236,10 +238,15 @@
       const messageInput = document.querySelector("#message-input");
       const sendButton = document.querySelector("#send-button");
       const voiceButton = document.querySelector("#voice-button");
+      const browserVoiceButton = document.querySelector("#browser-voice-button");
       const audioPlayback = document.querySelector("#audio-playback");
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
       let room = null;
       let connected = false;
+      let browserRecognition = null;
+      let browserVoiceFailed = false;
+      const pendingVoiceReplies = new Set();
       const transcriptElements = new Map();
 
       function setStatus(text, isConnected = connected) {
@@ -255,10 +262,13 @@
         messageInput.disabled = !value;
         sendButton.disabled = !value;
         voiceButton.disabled = !value;
+        browserVoiceButton.disabled = !value || !SpeechRecognition;
         if (!value) {
           voiceButton.setAttribute("aria-pressed", "false");
           voiceButton.setAttribute("aria-label", "Start voice input");
           voiceButton.textContent = "Mic";
+          stopBrowserVoice();
+          pendingVoiceReplies.clear();
         }
         if (!value) {
           setStatus("Not connected", false);
@@ -279,6 +289,11 @@
         history.append(wrapper);
         history.scrollTop = history.scrollHeight;
         return wrapper;
+      }
+
+      function resetConversationView() {
+        history.replaceChildren(emptyState);
+        transcriptElements.clear();
       }
 
       function showAssistantTranscript(segments) {
@@ -302,9 +317,27 @@
         showAssistantTranscript(segments);
       }
 
-      function onAssistantText(text) {
+      function speakAssistantReply(text) {
+        if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+          setStatus("Reply received, but browser speech playback is unavailable.");
+          return;
+        }
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = navigator.language || "en-US";
+        utterance.onstart = () => setStatus("Speaking browser voice reply…");
+        utterance.onend = () => setStatus("Voice reply complete.");
+        utterance.onerror = () => setStatus("The browser could not play the voice reply.");
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utterance);
+      }
+
+      function onAssistantText(text, requestId) {
         if (typeof text === "string" && text.trim()) {
-          addMessage("assistant", text.trim());
+          const reply = text.trim();
+          addMessage("assistant", reply);
+          if (pendingVoiceReplies.delete(requestId)) {
+            speakAssistantReply(reply);
+          }
         }
       }
 
@@ -314,7 +347,7 @@
         try {
           const packet = JSON.parse(new TextDecoder().decode(payload));
           if (packet.type === "assistant_response" && typeof packet.text === "string") {
-            onAssistantText(packet.text);
+            onAssistantText(packet.text, packet.request_id);
           }
         } catch (error) {
           console.error("Could not decode assistant data message:", error);
@@ -332,6 +365,115 @@
       function onTrackUnsubscribed(track) {
         if (track.kind !== Track.Kind.Audio) return;
         for (const element of track.detach()) element.remove();
+      }
+
+      function stopBrowserVoice() {
+        const recognition = browserRecognition;
+        browserRecognition = null;
+        browserVoiceFailed = false;
+        browserVoiceButton.setAttribute("aria-pressed", "false");
+        browserVoiceButton.setAttribute("aria-label", "Start browser voice input");
+        browserVoiceButton.textContent = "Web voice";
+        if (!recognition) return;
+
+        recognition.onend = null;
+        recognition.onerror = null;
+        recognition.onresult = null;
+        try {
+          recognition.abort();
+        } catch (error) {
+          console.warn("Could not stop browser speech recognition:", error);
+        }
+      }
+
+      async function sendChatText(text, { speakReply = false } = {}) {
+        if (!room || !connected) {
+          throw new Error("The chat room is not connected.");
+        }
+
+        const requestId = crypto.randomUUID();
+        const packet = {
+          type: "chat",
+          request_id: requestId,
+          text,
+        };
+        if (speakReply) pendingVoiceReplies.add(requestId);
+        try {
+          await room.localParticipant.publishData(
+            new TextEncoder().encode(JSON.stringify(packet)),
+            { reliable: true, topic: "chat.user" },
+          );
+        } catch (error) {
+          pendingVoiceReplies.delete(requestId);
+          throw error;
+        }
+        addMessage("user", text);
+      }
+
+      function startBrowserVoice() {
+        if (!SpeechRecognition || !room || !connected) return;
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = navigator.language || "en-US";
+        recognition.interimResults = false;
+        recognition.continuous = false;
+        browserRecognition = recognition;
+        browserVoiceFailed = false;
+        browserVoiceButton.setAttribute("aria-pressed", "true");
+        browserVoiceButton.setAttribute("aria-label", "Stop browser voice input");
+        browserVoiceButton.textContent = "Listening";
+        setStatus("Listening in browser…");
+
+        recognition.onresult = (event) => {
+          const text = event.results[event.resultIndex]?.[0]?.transcript?.trim();
+          if (!text) {
+            setStatus("No speech was recognized. Try again.");
+            return;
+          }
+          if (text.length > 2000) {
+            setStatus("Recognized speech is too long. Please try a shorter message.");
+            return;
+          }
+
+          void sendChatText(text, { speakReply: true })
+            .then(() => setStatus("Speech sent. Waiting for the reply…"))
+            .catch((error) => {
+              console.error("Could not send recognized speech:", error);
+              setStatus("Recognized speech could not be sent. Please try again.");
+            });
+        };
+        recognition.onerror = (event) => {
+          browserVoiceFailed = true;
+          const messages = {
+            "audio-capture": "No microphone was found. Check your audio input.",
+            "not-allowed": "Microphone permission was denied. Allow microphone access and try again.",
+            "service-not-allowed": "Browser speech recognition is blocked by browser settings.",
+            "no-speech": "No speech was detected. Try again.",
+            network: "Browser speech recognition needs a working network connection.",
+          };
+          setStatus(messages[event.error] || `Browser speech recognition failed: ${event.error}.`);
+        };
+        recognition.onend = () => {
+          if (browserRecognition !== recognition) return;
+          browserRecognition = null;
+          browserVoiceButton.setAttribute("aria-pressed", "false");
+          browserVoiceButton.setAttribute("aria-label", "Start browser voice input");
+          browserVoiceButton.textContent = "Web voice";
+          if (!browserVoiceFailed && connectionStatus.textContent === "Listening in browser…") {
+            setStatus("Voice input stopped.");
+          }
+        };
+
+        try {
+          recognition.start();
+        } catch (error) {
+          browserRecognition = null;
+          browserVoiceButton.setAttribute("aria-pressed", "false");
+          browserVoiceButton.setAttribute("aria-label", "Start browser voice input");
+          browserVoiceButton.textContent = "Web voice";
+          console.error("Could not start browser speech recognition:", error);
+          setStatus("Could not start browser voice input. Please try again.");
+        }
       }
 
       async function disconnect() {
@@ -381,8 +523,9 @@
 
           setStatus("Connecting to room…", false);
           await room.connect(result.url, result.token);
+          resetConversationView();
           setConnected(true);
-          setStatus(`Connected to ${result.room}`);
+          setStatus(`Connected · conversation ${result.conversation_id.slice(0, 8)}`);
 
           try {
             await room.startAudio();
@@ -408,16 +551,7 @@
 
         sendButton.disabled = true;
         try {
-          const packet = {
-            type: "chat",
-            request_id: crypto.randomUUID(),
-            text,
-          };
-          await room.localParticipant.publishData(
-            new TextEncoder().encode(JSON.stringify(packet)),
-            { reliable: true, topic: "chat.user" },
-          );
-          addMessage("user", text);
+          await sendChatText(text);
           messageInput.value = "";
           messageInput.focus();
         } catch (error) {
@@ -431,6 +565,10 @@
       voiceButton.addEventListener("click", async () => {
         if (!room || !connected) return;
         const starting = voiceButton.getAttribute("aria-pressed") !== "true";
+        if (starting && browserRecognition) {
+          setStatus("Stop Web voice before using LiveKit Mic.");
+          return;
+        }
         voiceButton.disabled = true;
         try {
           await room.localParticipant.setMicrophoneEnabled(starting);
@@ -447,6 +585,21 @@
         } finally {
           voiceButton.disabled = !connected;
         }
+      });
+
+      browserVoiceButton.title = SpeechRecognition
+        ? "Use browser speech recognition and voice playback"
+        : "Browser speech recognition is not supported. Try a current version of Chrome or Edge.";
+      browserVoiceButton.addEventListener("click", () => {
+        if (browserRecognition) {
+          browserRecognition.stop();
+          return;
+        }
+        if (voiceButton.getAttribute("aria-pressed") === "true") {
+          setStatus("Stop LiveKit Mic before using Web voice.");
+          return;
+        }
+        startBrowserVoice();
       });
 
       connectButton.addEventListener("click", connect);

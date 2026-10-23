@@ -33,12 +33,17 @@ async def index() -> FileResponse:
 
 @app.post("/api/token")
 async def create_token(request: TokenRequest) -> dict[str, str]:
-    room = request.room.strip()
-    if not ROOM_NAME_PATTERN.fullmatch(room):
+    conversation_label = request.room.strip()
+    if not ROOM_NAME_PATTERN.fullmatch(conversation_label):
         raise HTTPException(
             status_code=422,
-            detail="Room names may contain only letters, numbers, underscores, and hyphens.",
+            detail=(
+                "Conversation labels may contain only letters, numbers, "
+                "underscores, and hyphens."
+            ),
         )
+    conversation_id = uuid4().hex
+    room = f"{conversation_label[:80]}-{conversation_id}"
 
     livekit_url = Config.LIVEKIT_URL.strip()
     api_key = Config.LIVEKIT_API_KEY.strip()
@@ -75,7 +80,12 @@ async def create_token(request: TokenRequest) -> dict[str, str]:
             )
             .with_room_config(
                 api.RoomConfiguration(
-                    agents=[api.RoomAgentDispatch(agent_name=AGENT_NAME)]
+                    agents=[
+                        api.RoomAgentDispatch(
+                            agent_name=AGENT_NAME,
+                            metadata=conversation_id,
+                        )
+                    ]
                 )
             )
             .with_ttl(timedelta(hours=1))
@@ -93,6 +103,7 @@ async def create_token(request: TokenRequest) -> dict[str, str]:
         "token": token,
         "room": room,
         "identity": identity,
+        "conversation_id": conversation_id,
     }
 
 
