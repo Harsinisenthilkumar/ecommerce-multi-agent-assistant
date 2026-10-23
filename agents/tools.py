@@ -1,3 +1,4 @@
+import re
 from threading import Lock
 from uuid import uuid4
 
@@ -21,7 +22,11 @@ _store_lock = Lock()
 def _normalize_sku(sku: str) -> str:
     if not isinstance(sku, str) or not sku.strip():
         raise ValueError("sku must be a non-empty string.")
-    return sku.strip().upper()
+    normalized_sku = sku.strip().upper()
+    numeric_sku = re.fullmatch(r"(?:SKU[\s-]*)?([0-9]+)", normalized_sku)
+    if numeric_sku is not None:
+        return f"SKU-{numeric_sku.group(1)}"
+    return normalized_sku
 
 
 @tool
@@ -89,6 +94,5 @@ def track_order(order_id: str) -> str:
         f"Order '{normalized_order_id}' status: {order_details['status']}; "
         f"SKU: {order_details['sku']}; quantity: {order_details['quantity']}."
     )
-
 
 
